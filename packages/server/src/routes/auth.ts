@@ -1,7 +1,8 @@
 // packages/server/src/routes/auth.ts
 import { FastifyInstance } from 'fastify';
 import { authService } from '../services/auth.js';
-import { userModel, refreshTokenModel } from '../db/index.js';
+import { userModel, refreshTokenModel, agentModel } from '../db/index.js';
+import { tunnelManager } from '../ws/tunnel.js';
 import bcrypt from 'bcrypt';
 
 export async function authRoutes(fastify: FastifyInstance) {
@@ -104,5 +105,29 @@ export async function authRoutes(fastify: FastifyInstance) {
       username: user.username,
       createdAt: user.created_at,
     };
+  });
+
+  // 获取用户的 Agent 列表
+  fastify.get('/api/agents', {
+    preHandler: async (request, reply) => {
+      try {
+        await request.jwtVerify();
+      } catch (err) {
+        return reply.status(401).send({ error: 'Unauthorized' });
+      }
+    }
+  }, async (request, reply) => {
+    const payload = request.user as { userId: number; username: string };
+    const agents = agentModel.findByUserId(payload.userId);
+
+    // 添加在线状态
+    const agentsWithStatus = agents.map(agent => ({
+      agentId: agent.agent_id,
+      name: agent.name,
+      online: tunnelManager.isAgentOnline(agent.agent_id),
+      lastSeen: agent.last_seen,
+    }));
+
+    return { agents: agentsWithStatus };
   });
 }

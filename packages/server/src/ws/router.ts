@@ -1,6 +1,7 @@
 // packages/server/src/ws/router.ts
 import WebSocket from 'ws';
 import { tunnelManager } from './tunnel.js';
+import { agentModel } from '../db/index.js';
 
 export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
   const { type, payload, sessionId } = message;
@@ -79,7 +80,16 @@ function handleAgentRegister(ws: WebSocket, payload: any) {
     return;
   }
 
-  // 注册 Agent
+  // 确保 Agent 在数据库中存在
+  let agent = agentModel.findByAgentId(agentId);
+  if (!agent) {
+    agent = agentModel.create(agentId, name || null, userId);
+  } else {
+    // 更新 last_seen
+    agentModel.updateLastSeen(agentId);
+  }
+
+  // 注册 Agent 到 TunnelManager
   tunnelManager.registerAgent(ws, agentId, userId);
 
   ws.send(JSON.stringify({

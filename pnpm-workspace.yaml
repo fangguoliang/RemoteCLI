@@ -1,2 +1,11 @@
 packages:
   - 'packages/*'
+allowBuilds:
+  '-': true
+  d: true
+  e: true
+  n: true
+  o: true
+  p: true
+  t: true
+  y: true

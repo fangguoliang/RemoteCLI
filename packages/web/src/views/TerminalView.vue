@@ -58,18 +58,38 @@ async function loadAgents() {
   loading.value = true;
   error.value = '';
   try {
+    const token = authStore.accessToken;
+    if (!token) {
+      error.value = 'Not authenticated';
+      loading.value = false;
+      return;
+    }
+
+    console.log('Fetching agents from:', `${settingsStore.settings.apiUrl}/api/agents`);
+
     const response = await fetch(`${settingsStore.settings.apiUrl}/api/agents`, {
       headers: {
-        'Authorization': `Bearer ${authStore.accessToken}`,
+        'Authorization': `Bearer ${token}`,
       },
     });
+
+    console.log('Response status:', response.status);
+
+    if (!response.ok) {
+      error.value = `Server error: ${response.status}`;
+      loading.value = false;
+      return;
+    }
+
     const data = await response.json();
+    console.log('Agents data:', data);
+
     if (data.agents) {
       terminalStore.setAgents(data.agents);
     }
   } catch (e) {
-    error.value = 'Failed to load agents';
-    console.error(e);
+    error.value = `Failed to load agents: ${(e as Error).message}`;
+    console.error('Load agents error:', e);
   } finally {
     loading.value = false;
   }

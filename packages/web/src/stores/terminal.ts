@@ -107,8 +107,9 @@ export const useTerminalStore = defineStore('terminal', () => {
     tabs.value.push(tab);
     activeTabId.value = tab.id;
 
-    // Add to history (avoid duplicates, keep most recent first)
-    const existingIndex = historyTabs.value.findIndex(t => t.agentId === tab.agentId);
+    // Add to history (keep most recent first, allow multiple sessions per agent)
+    // Remove duplicate by id if exists
+    const existingIndex = historyTabs.value.findIndex(t => t.id === tab.id);
     if (existingIndex !== -1) {
       historyTabs.value.splice(existingIndex, 1);
     }
@@ -144,8 +145,8 @@ export const useTerminalStore = defineStore('terminal', () => {
     const tab = tabs.value.find(t => t.id === tabId);
     if (tab) {
       tab.sessionId = sessionId;
-      // Also update in history
-      const historyTab = historyTabs.value.find(t => t.agentId === tab.agentId);
+      // Also update in history - find by id, not by agentId
+      const historyTab = historyTabs.value.find(t => t.id === tabId);
       if (historyTab) {
         historyTab.sessionId = sessionId;
       }

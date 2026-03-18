@@ -22,32 +22,37 @@
           </div>
         </div>
       </div>
-      <div class="tabs">
-        <div v-for="tab in tabs" :key="tab.id" class="tab" :class="{ active: tab.id === activeTabId }" @click="setActiveTab(tab.id)">
-          {{ tab.title }}
-          <span class="close" @click.stop="closeTab(tab.id)">×</span>
-        </div>
-        <button v-if="tabs.length === 0" class="new-tab-btn" @click="showAgents = !showAgents">+ New Terminal</button>
-      </div>
-      <div class="history-dropdown" v-if="historyTabs.length > 0">
-        <button class="history-btn" @click="showHistory = !showHistory" title="历史记录">
-          📋
-        </button>
-        <div class="dropdown-menu history-menu" v-show="showHistory">
-          <div class="menu-header">历史终端</div>
-          <div v-for="tab in historyTabs" :key="tab.id" class="menu-item history-item" @click="restoreFromHistory(tab)">
-            <span class="status-dot" :class="{ online: agents.find(a => a.agentId === tab.agentId)?.online }"></span>
-            <div class="history-info">
-              <span class="history-title">{{ tab.title }}</span>
-              <span class="history-time">{{ formatTime(tab.createdAt) }}</span>
+      <div class="topbar-actions">
+        <div class="history-dropdown" v-if="historyTabs.length > 0">
+          <button class="history-btn" @click="showHistory = !showHistory" title="历史记录">
+            📋
+          </button>
+          <div class="dropdown-menu history-menu" v-show="showHistory">
+            <div class="menu-header">历史终端 ({{ historyTabs.length }})</div>
+            <div v-for="tab in historyTabs" :key="tab.id" class="menu-item history-item" @click="restoreFromHistory(tab)">
+              <span class="status-dot" :class="{ online: agents.find(a => a.agentId === tab.agentId)?.online }"></span>
+              <div class="history-info">
+                <span class="history-title">{{ tab.title }}</span>
+                <span class="history-time">{{ formatTime(tab.createdAt) }}</span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-      <div class="actions">
         <router-link to="/settings" class="action-btn" title="设置">⚙</router-link>
         <button @click="logout" class="action-btn" title="登出">⏻</button>
       </div>
+    </div>
+    <!-- 会话标签栏 - 第二行 -->
+    <div class="tabs-bar" v-if="tabs.length > 0">
+      <div class="tabs-scroll">
+        <div class="tabs">
+          <div v-for="tab in tabs" :key="tab.id" class="tab" :class="{ active: tab.id === activeTabId }" @click="setActiveTab(tab.id)">
+            {{ tab.title }}
+            <span class="close" @click.stop="closeTab(tab.id)">×</span>
+          </div>
+        </div>
+      </div>
+      <button class="add-tab-btn" @click="showAgents = !showAgents" title="新建终端">+</button>
     </div>
     <!-- 终端区域 -->
     <div class="terminal-container">
@@ -271,11 +276,10 @@ onUnmounted(() => {
 .topbar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   background: #16213e;
   padding: 0.5rem;
   gap: 0.5rem;
-  min-height: 44px;
-  flex-wrap: wrap;
 }
 
 .agents-dropdown {
@@ -365,70 +369,10 @@ onUnmounted(() => {
   background: #4caf50;
 }
 
-.tabs {
-  display: flex;
-  flex: 1;
-  overflow-x: auto;
-  gap: 0.25rem;
-  min-width: 0;
-}
-
-.tab {
+.topbar-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.75rem;
-  background: #1a1a2e;
-  border-radius: 4px;
-  color: #888;
-  font-size: 0.85rem;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.tab.active {
-  color: #fff;
-  background: #252547;
-}
-
-.tab .close {
-  font-size: 1rem;
-  opacity: 0.6;
-}
-
-.tab .close:hover {
-  opacity: 1;
-  color: #e94560;
-}
-
-.new-tab-btn {
-  padding: 0.4rem 0.75rem;
-  background: #e94560;
-  border: none;
-  border-radius: 4px;
-  color: #fff;
-  font-size: 0.85rem;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.actions {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.action-btn {
-  padding: 0.5rem;
-  background: none;
-  border: none;
-  color: #888;
-  text-decoration: none;
-  cursor: pointer;
-  font-size: 1rem;
-}
-
-.action-btn:hover {
-  color: #e94560;
 }
 
 .history-dropdown {
@@ -481,6 +425,103 @@ onUnmounted(() => {
 .history-time {
   font-size: 0.75rem;
   color: #666;
+}
+
+.action-btn {
+  padding: 0.5rem;
+  background: none;
+  border: none;
+  color: #888;
+  text-decoration: none;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.action-btn:hover {
+  color: #e94560;
+}
+
+/* 会话标签栏 - 第二行 */
+.tabs-bar {
+  display: flex;
+  align-items: center;
+  background: #1a1a2e;
+  padding: 0.25rem 0.5rem;
+  gap: 0.5rem;
+  border-bottom: 1px solid #333;
+}
+
+.tabs-scroll {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* 隐藏滚动条但保留滚动功能 */
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+
+.tabs-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.tabs-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tabs-scroll::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 2px;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  background: #16213e;
+  border-radius: 4px;
+  color: #888;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.tab.active {
+  color: #fff;
+  background: #252547;
+}
+
+.tab .close {
+  font-size: 1rem;
+  opacity: 0.6;
+}
+
+.tab .close:hover {
+  opacity: 1;
+  color: #e94560;
+}
+
+.add-tab-btn {
+  padding: 0.4rem 0.75rem;
+  background: #e94560;
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.add-tab-btn:hover {
+  background: #ff6b6b;
 }
 
 .terminal-container {

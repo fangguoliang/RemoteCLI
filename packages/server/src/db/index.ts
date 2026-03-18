@@ -108,7 +108,7 @@ export const agentModel = {
     const stmt = 'INSERT INTO agents (agent_id, name, user_id, created_at) VALUES (?, ?, ?, ?)';
     runStatement(stmt, [agentId, name, userId, now]);
     saveDatabase();
-    return { agentId, name, userId, createdAt: now };
+    return { id: 0, agent_id: agentId, name, user_id: userId, last_seen: null, created_at: now };
   },
 
   findByAgentId: (agentId: string) => {

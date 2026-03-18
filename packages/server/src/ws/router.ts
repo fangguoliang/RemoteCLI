@@ -1,7 +1,18 @@
 // packages/server/src/ws/router.ts
 import WebSocket from 'ws';
+import { webcrypto } from 'crypto';
 import { tunnelManager } from './tunnel.js';
 import { agentModel } from '../db/index.js';
+
+const crypto = webcrypto;
+
+function generateUUID(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
 
 export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
   const { type, payload, sessionId } = message;
@@ -134,7 +145,7 @@ function handleBrowserAuth(ws: WebSocket, payload: any) {
 }
 
 function handleSessionCreate(ws: WebSocket, payload: any) {
-  const sessionId = crypto.randomUUID();
+  const sessionId = generateUUID();
   const { cols, rows, agentId } = payload;
 
   // 如果消息中指定了 agentId，先绑定

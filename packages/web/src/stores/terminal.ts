@@ -7,10 +7,16 @@ export interface Tab {
   agentId: string;
 }
 
+// Key sender function type
+type KeySender = (key: string) => void;
+
 export const useTerminalStore = defineStore('terminal', () => {
   const tabs = ref<Tab[]>([]);
   const activeTabId = ref<string | null>(null);
   const agents = ref<{ agentId: string; name: string; online: boolean }[]>([]);
+
+  // Registry for key senders (tabId -> sendKey function)
+  const keySenders = new Map<string, KeySender>();
 
   function addTab(tab: Tab) {
     tabs.value.push(tab);
@@ -21,6 +27,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     const index = tabs.value.findIndex(t => t.id === id);
     if (index !== -1) {
       tabs.value.splice(index, 1);
+      keySenders.delete(id);
       if (activeTabId.value === id) {
         activeTabId.value = tabs.value[0]?.id || null;
       }
@@ -35,5 +42,36 @@ export const useTerminalStore = defineStore('terminal', () => {
     agents.value = list;
   }
 
-  return { tabs, activeTabId, agents, addTab, removeTab, setActiveTab, setAgents };
+  // Register a key sender for a tab
+  function registerKeySender(tabId: string, sender: KeySender) {
+    keySenders.set(tabId, sender);
+  }
+
+  // Unregister a key sender
+  function unregisterKeySender(tabId: string) {
+    keySenders.delete(tabId);
+  }
+
+  // Send a key to the active tab
+  function sendKeyToActive(key: string) {
+    if (activeTabId.value) {
+      const sender = keySenders.get(activeTabId.value);
+      if (sender) {
+        sender(key);
+      }
+    }
+  }
+
+  return {
+    tabs,
+    activeTabId,
+    agents,
+    addTab,
+    removeTab,
+    setActiveTab,
+    setAgents,
+    registerKeySender,
+    unregisterKeySender,
+    sendKeyToActive,
+  };
 });

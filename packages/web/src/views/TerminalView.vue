@@ -42,6 +42,13 @@
       </div>
       <TerminalTab v-for="tab in tabs" :key="tab.id" :tab="tab" :visible="tab.id === activeTabId" />
     </div>
+    <!-- 底部快捷键按钮 -->
+    <div class="bottom-bar" v-if="tabs.length > 0">
+      <button class="key-btn tab-btn" @click="sendKey('Tab')">Tab</button>
+      <div class="spacer"></div>
+      <button class="key-btn arrow-btn" @click="sendKey('ArrowUp')">↑</button>
+      <button class="key-btn arrow-btn" @click="sendKey('ArrowDown')">↓</button>
+    </div>
   </div>
 </template>
 
@@ -49,7 +56,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
-import { useTerminalStore, type Tab } from '../stores/terminal';
+import { useTerminalStore } from '../stores/terminal';
 import { useSettingsStore } from '../stores/settings';
 import TerminalTab from '../components/TerminalTab.vue';
 
@@ -114,7 +121,7 @@ onUnmounted(() => {
 
 function selectAgent(agentId: string) {
   showAgents.value = false;
-  const tabId = crypto.randomUUID();
+  const tabId = 'tab-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
   terminalStore.addTab({ id: tabId, title: `Terminal ${tabs.value.length + 1}`, agentId });
 }
 
@@ -129,6 +136,11 @@ function setActiveTab(id: string) {
 function logout() {
   authStore.clearTokens();
   router.push('/login');
+}
+
+// Send special key to active terminal
+function sendKey(key: string) {
+  terminalStore.sendKeyToActive(key);
 }
 
 // Close dropdown when clicking outside
@@ -340,5 +352,45 @@ onUnmounted(() => {
   color: #666;
   font-size: 0.85rem;
   margin-top: 0.5rem;
+}
+
+/* 底部快捷键按钮 */
+.bottom-bar {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem;
+  background: #16213e;
+  gap: 0.5rem;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.key-btn {
+  padding: 0.75rem 1.5rem;
+  background: #252547;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 1rem;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.key-btn:active {
+  background: #e94560;
+  transform: scale(0.95);
+}
+
+.tab-btn {
+  font-weight: bold;
+}
+
+.arrow-btn {
+  padding: 0.75rem 1rem;
+  min-width: 50px;
 }
 </style>

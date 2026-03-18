@@ -4,7 +4,6 @@ import jwt from '@fastify/jwt';
 import cors from '@fastify/cors';
 import { authRoutes } from '../routes/auth.js';
 import { userModel } from '../db/index.js';
-import bcrypt from 'bcrypt';
 
 async function buildServer() {
   const fastify = Fastify({ logger: false });

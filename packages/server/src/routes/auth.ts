@@ -3,7 +3,6 @@ import { FastifyInstance } from 'fastify';
 import { authService } from '../services/auth.js';
 import { userModel, refreshTokenModel, agentModel } from '../db/index.js';
 import { tunnelManager } from '../ws/tunnel.js';
-import bcrypt from 'bcrypt';
 
 export async function authRoutes(fastify: FastifyInstance) {
   // 注册

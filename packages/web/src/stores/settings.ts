@@ -9,7 +9,7 @@ export interface Settings {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  apiUrl: 'http://localhost:3000',
+  apiUrl: '',
   theme: 'dark',
   fontFamily: 'Consolas, monospace',
   fontSize: 14,

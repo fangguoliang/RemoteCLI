@@ -13,6 +13,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { useAuthStore } from '../stores/auth';
 import { useSettingsStore } from '../stores/settings';
+import { useTerminalStore } from '../stores/terminal';
 import type { Tab } from '../stores/terminal';
 import 'xterm/css/xterm.css';
 
@@ -28,12 +29,14 @@ let sessionId: string | null = null;
 
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
+const terminalStore = useTerminalStore();
 
 onMounted(() => {
   initTerminal();
 });
 
 onUnmounted(() => {
+  terminalStore.unregisterKeySender(props.tab.id);
   cleanup();
 });
 
@@ -59,9 +62,7 @@ function initTerminal() {
   fitAddon.fit();
 
   terminal.onData((data) => {
-    if (ws && sessionId) {
-      ws.send(JSON.stringify({ type: 'session:input', sessionId, payload: { data }, timestamp: Date.now() }));
-    }
+    sendInput(data);
   });
 
   terminal.onResize(({ cols, rows }) => {
@@ -70,12 +71,42 @@ function initTerminal() {
     }
   });
 
+  // Register key sender for this tab
+  terminalStore.registerKeySender(props.tab.id, sendKey);
+
   connectWebSocket();
+}
+
+// Send input to the terminal
+function sendInput(data: string) {
+  if (ws && sessionId) {
+    ws.send(JSON.stringify({ type: 'session:input', sessionId, payload: { data }, timestamp: Date.now() }));
+  }
+}
+
+// Send special keys (Tab, Up, Down, etc.)
+function sendKey(key: string) {
+  const keyMap: Record<string, string> = {
+    'Tab': '\t',
+    'ArrowUp': '\x1b[A',
+    'ArrowDown': '\x1b[B',
+    'ArrowLeft': '\x1b[D',
+    'ArrowRight': '\x1b[C',
+    'Enter': '\r',
+    'Escape': '\x1b',
+    'Backspace': '\x7f',
+  };
+  const data = keyMap[key] || key;
+  sendInput(data);
 }
 
 function connectWebSocket() {
   status.value = 'connecting';
-  const wsUrl = settingsStore.settings.apiUrl.replace(/^http/, 'ws') + '/ws/browser';
+  const apiUrl = settingsStore.settings.apiUrl || '';
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = apiUrl
+    ? apiUrl.replace(/^http/, 'ws') + '/ws/browser'
+    : `${wsProtocol}//${window.location.host}/ws/browser`;
 
   ws = new WebSocket(wsUrl);
 

@@ -1,7 +1,10 @@
 // packages/server/src/services/auth.ts
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
+import { webcrypto } from 'crypto';
 import { userModel, refreshTokenModel } from '../db/index.js';
 import type { FastifyInstance } from 'fastify';
+
+const crypto = webcrypto;
 
 const SALT_ROUNDS = 10;
 const ACCESS_TOKEN_EXPIRY = '15m';

@@ -140,8 +140,16 @@ onMounted(() => {
 });
 
 // Restore last session if agent is online
+// Priority: 1) sessionStorage session (page refresh), 2) localStorage history (new login)
 function restoreLastSession() {
-  const lastTab = terminalStore.getLastActiveTab();
+  // First try to restore from sessionStorage (page refresh scenario)
+  let lastTab = terminalStore.getLastActiveTab();
+
+  // If no session, try to restore from history (new login scenario)
+  if (!lastTab) {
+    lastTab = terminalStore.getLastHistoryTab();
+  }
+
   if (!lastTab) return;
 
   const agent = agents.value.find(a => a.agentId === lastTab.agentId);
@@ -156,9 +164,9 @@ function restoreLastSession() {
     });
     console.log('Restored session for agent:', lastTab.agentId);
   } else {
-    // Agent offline, clear saved session
-    terminalStore.clearAll();
-    console.log('Agent offline, session cleared:', lastTab.agentId);
+    // Agent offline, just clear current session (keep history)
+    terminalStore.clearCurrentSession();
+    console.log('Agent offline:', lastTab.agentId);
   }
 }
 
@@ -188,7 +196,7 @@ function setActiveTab(id: string) {
 
 function logout() {
   authStore.clearTokens();
-  terminalStore.clearAll();
+  terminalStore.clearCurrentSession();
   router.push('/login');
 }
 

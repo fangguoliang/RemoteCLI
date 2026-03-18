@@ -11,16 +11,17 @@ export interface Tab {
 interface StoredSession {
   tabs: Tab[];
   activeTabId: string | null;
-  historyTabs: Tab[];
 }
 
 const SESSION_KEY = 'ccremote-terminal-session';
+const HISTORY_KEY = 'ccremote-terminal-history';
 const MAX_HISTORY = 10;
 
 // Key sender function type
 type KeySender = (key: string) => void;
 
-function loadSession(): StoredSession | null {
+// Session storage (temporary, cleared on browser close)
+function loadSessionData(): StoredSession | null {
   try {
     const data = sessionStorage.getItem(SESSION_KEY);
     if (data) {
@@ -32,7 +33,7 @@ function loadSession(): StoredSession | null {
   return null;
 }
 
-function saveSession(data: StoredSession): void {
+function saveSessionData(data: StoredSession): void {
   try {
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(data));
   } catch (e) {
@@ -40,7 +41,7 @@ function saveSession(data: StoredSession): void {
   }
 }
 
-function clearSession(): void {
+function clearSessionData(): void {
   try {
     sessionStorage.removeItem(SESSION_KEY);
   } catch (e) {
@@ -48,32 +49,55 @@ function clearSession(): void {
   }
 }
 
+// History storage (persistent, survives browser close)
+function loadHistoryData(): Tab[] {
+  try {
+    const data = localStorage.getItem(HISTORY_KEY);
+    if (data) {
+      return JSON.parse(data);
+    }
+  } catch (e) {
+    console.error('Failed to load history:', e);
+  }
+  return [];
+}
+
+function saveHistoryData(tabs: Tab[]): void {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(tabs));
+  } catch (e) {
+    console.error('Failed to save history:', e);
+  }
+}
+
 export const useTerminalStore = defineStore('terminal', () => {
   const tabs = ref<Tab[]>([]);
   const activeTabId = ref<string | null>(null);
   const agents = ref<{ agentId: string; name: string; online: boolean }[]>([]);
-  const historyTabs = ref<Tab[]>([]);
+  const historyTabs = ref<Tab[]>(loadHistoryData());
 
   // Registry for key senders (tabId -> sendKey function)
   const keySenders = new Map<string, KeySender>();
 
-  // Load saved session on init
-  const savedSession = loadSession();
-  if (savedSession) {
-    historyTabs.value = savedSession.historyTabs || [];
-  }
-
-  // Watch for changes and auto-save
+  // Watch for changes and auto-save session
   watch(
     [tabs, activeTabId],
     () => {
       if (tabs.value.length > 0) {
-        saveSession({
+        saveSessionData({
           tabs: tabs.value,
           activeTabId: activeTabId.value,
-          historyTabs: historyTabs.value,
         });
       }
+    },
+    { deep: true }
+  );
+
+  // Watch history and auto-save to localStorage
+  watch(
+    historyTabs,
+    () => {
+      saveHistoryData(historyTabs.value);
     },
     { deep: true }
   );
@@ -106,7 +130,7 @@ export const useTerminalStore = defineStore('terminal', () => {
 
     // Update session storage
     if (tabs.value.length === 0) {
-      clearSession();
+      clearSessionData();
     }
   }
 
@@ -138,22 +162,36 @@ export const useTerminalStore = defineStore('terminal', () => {
     }
   }
 
-  // Get the last active tab from saved session
+  // Get the last active tab from saved session (for page refresh)
   function getLastActiveTab(): Tab | null {
-    const session = loadSession();
+    const session = loadSessionData();
     if (session && session.activeTabId) {
       return session.tabs.find(t => t.id === session.activeTabId) || null;
     }
     return null;
   }
 
-  // Clear all session data (used on logout)
+  // Get the most recent history tab (for login restore)
+  function getLastHistoryTab(): Tab | null {
+    return historyTabs.value[0] || null;
+  }
+
+  // Clear current session only (used on logout, but keep history)
+  function clearCurrentSession() {
+    tabs.value = [];
+    activeTabId.value = null;
+    keySenders.clear();
+    clearSessionData();
+  }
+
+  // Clear all data including history
   function clearAll() {
     tabs.value = [];
     activeTabId.value = null;
     historyTabs.value = [];
     keySenders.clear();
-    clearSession();
+    clearSessionData();
+    localStorage.removeItem(HISTORY_KEY);
   }
 
   return {
@@ -169,6 +207,8 @@ export const useTerminalStore = defineStore('terminal', () => {
     unregisterKeySender,
     sendKeyToActive,
     getLastActiveTab,
+    getLastHistoryTab,
+    clearCurrentSession,
     clearAll,
   };
 });

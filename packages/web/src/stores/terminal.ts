@@ -120,6 +120,21 @@ export const useTerminalStore = defineStore('terminal', () => {
     }
   }
 
+  // Restore a tab from history (without adding to history again)
+  function restoreTab(tab: Tab) {
+    // Check if already open
+    const existingTab = tabs.value.find(t => t.sessionId === tab.sessionId);
+    if (existingTab) {
+      // Just activate it
+      activeTabId.value = existingTab.id;
+      return;
+    }
+
+    // Add to current tabs without updating history
+    tabs.value.push(tab);
+    activeTabId.value = tab.id;
+  }
+
   function removeTab(id: string) {
     const index = tabs.value.findIndex(t => t.id === id);
     if (index !== -1) {
@@ -215,6 +230,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     agents,
     historyTabs,
     addTab,
+    restoreTab,
     removeTab,
     setActiveTab,
     updateTabSessionId,

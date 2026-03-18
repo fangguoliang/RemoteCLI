@@ -52,7 +52,7 @@
           </div>
         </div>
       </div>
-      <button class="add-tab-btn" @click="showAgents = !showAgents" title="新建终端">+</button>
+      <button class="add-tab-btn" @click="createNewTerminal" title="新建终端">+</button>
     </div>
     <!-- 终端区域 -->
     <div class="terminal-container">
@@ -246,14 +246,18 @@ function restoreFromHistory(tab: typeof terminalStore.historyTabs[0]) {
     alert(`Agent "${tab.title}" is offline`);
     return;
   }
-  const tabId = 'tab-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-  terminalStore.addTab({
-    id: tabId,
-    title: agent.name || tab.agentId,
-    agentId: tab.agentId,
-    createdAt: Date.now(),
-    sessionId: tab.sessionId, // Pass sessionId for resume
-  });
+  // Use existing tab info to restore (don't create new history entry)
+  terminalStore.restoreTab(tab);
+}
+
+// Create new terminal session (for + button)
+function createNewTerminal() {
+  const onlineAgent = agents.value.find(a => a.online);
+  if (!onlineAgent) {
+    alert('No online agents available');
+    return;
+  }
+  selectAgent(onlineAgent.agentId);
 }
 
 onMounted(() => {

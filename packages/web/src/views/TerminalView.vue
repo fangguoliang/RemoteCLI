@@ -66,8 +66,10 @@
     <div class="bottom-bar" v-if="tabs.length > 0">
       <button class="key-btn tab-btn" @click="sendKey('Tab')">Tab</button>
       <div class="spacer"></div>
+      <button class="key-btn arrow-btn" @click="sendKey('ArrowLeft')">←</button>
       <button class="key-btn arrow-btn" @click="sendKey('ArrowUp')">↑</button>
       <button class="key-btn arrow-btn" @click="sendKey('ArrowDown')">↓</button>
+      <button class="key-btn arrow-btn" @click="sendKey('ArrowRight')">→</button>
     </div>
     <div class="footer-bar">
       <span class="author">作者@fangguoliang</span>
@@ -207,6 +209,13 @@ function sendKey(key: string) {
   terminalStore.sendKeyToActive(key);
   // Focus terminal after sending key
   terminalStore.focusActiveTab();
+  // Update session activity
+  authStore.updateLastActivity();
+}
+
+// Track user activity for session timeout
+function trackActivity() {
+  authStore.updateLastActivity();
 }
 
 // Close dropdown when clicking outside
@@ -270,10 +279,17 @@ function createNewTerminal() {
 
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
+  // Track user activity for session timeout
+  document.addEventListener('click', trackActivity);
+  document.addEventListener('keydown', trackActivity);
+  document.addEventListener('mousemove', trackActivity);
 });
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside);
+  document.removeEventListener('click', trackActivity);
+  document.removeEventListener('keydown', trackActivity);
+  document.removeEventListener('mousemove', trackActivity);
 });
 </script>
 

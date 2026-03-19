@@ -12,9 +12,17 @@ const router = createRouter({ history: createWebHistory(), routes });
 
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();
-  if (to.meta.requiresAuth && !authStore.isAuthenticated) {
-    next('/login');
-  } else if (to.path === '/login' && authStore.isAuthenticated) {
+
+  // Check session validity on protected routes
+  if (to.meta.requiresAuth) {
+    if (!authStore.checkAndInitSession()) {
+      // Session expired or invalid, redirect to login
+      next('/login');
+      return;
+    }
+  }
+
+  if (to.path === '/login' && authStore.isAuthenticated) {
     next('/terminal');
   } else {
     next();

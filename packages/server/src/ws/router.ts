@@ -107,8 +107,14 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
     case 'file:progress':
     case 'file:uploaded':
     case 'file:error':
-      // Agent 返回的文件响应，路由到对应的浏览器会话
-      if (sessionId) {
+      // Agent 返回的文件响应，路由到所有绑定到该 Agent 的浏览器
+      if (isAgent) {
+        const agentId = tunnelManager.getAgentIdByWs(ws);
+        if (agentId) {
+          tunnelManager.routeFileMessageToBrowsers(agentId, message);
+        }
+      } else if (sessionId) {
+        // 兼容旧的 sessionId 方式
         tunnelManager.routeToBrowser(sessionId, message);
       }
       break;

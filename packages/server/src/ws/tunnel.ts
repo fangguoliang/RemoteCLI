@@ -21,6 +21,8 @@ class TunnelManager {
   private browsers = new Map<WebSocket, BrowserConnection>();
   // Store session -> agentId mapping for session resumption
   private sessionAgents = new Map<string, string>();
+  // Store agent -> browsers mapping for file operations
+  private agentBrowsers = new Map<string, Set<WebSocket>>();
 
   // Agent 注册
   registerAgent(ws: WebSocket, agentId: string, userId: number) {
@@ -69,20 +71,33 @@ class TunnelManager {
   // 浏览器断开 - 不再关闭会话，而是暂停会话
   disconnectBrowser(ws: WebSocket) {
     const browser = this.browsers.get(ws);
-    if (browser && browser.agentId && browser.sessionId) {
-      // Store session -> agentId mapping for potential resume
-      this.sessionAgents.set(browser.sessionId, browser.agentId);
+    if (browser) {
+      // Clean up agentBrowsers mapping
+      if (browser.agentId) {
+        const browserSet = this.agentBrowsers.get(browser.agentId);
+        if (browserSet) {
+          browserSet.delete(ws);
+          if (browserSet.size === 0) {
+            this.agentBrowsers.delete(browser.agentId);
+          }
+        }
+      }
 
-      // Send session:pause to Agent instead of session:close
-      const agent = this.agents.get(browser.agentId);
-      if (agent) {
-        agent.sessions.delete(browser.sessionId);
-        agent.ws.send(JSON.stringify({
-          type: 'session:pause',
-          sessionId: browser.sessionId,
-          payload: {},
-          timestamp: Date.now(),
-        }));
+      if (browser.agentId && browser.sessionId) {
+        // Store session -> agentId mapping for potential resume
+        this.sessionAgents.set(browser.sessionId, browser.agentId);
+
+        // Send session:pause to Agent instead of session:close
+        const agent = this.agents.get(browser.agentId);
+        if (agent) {
+          agent.sessions.delete(browser.sessionId);
+          agent.ws.send(JSON.stringify({
+            type: 'session:pause',
+            sessionId: browser.sessionId,
+            payload: {},
+            timestamp: Date.now(),
+          }));
+        }
       }
     }
     this.browsers.delete(ws);
@@ -120,9 +135,28 @@ class TunnelManager {
     const browser = this.browsers.get(ws);
     if (browser && this.agents.has(agentId)) {
       browser.agentId = agentId;
+      // Add to agentBrowsers mapping for file operations
+      if (!this.agentBrowsers.has(agentId)) {
+        this.agentBrowsers.set(agentId, new Set());
+      }
+      this.agentBrowsers.get(agentId)!.add(ws);
       return true;
     }
     return false;
+  }
+
+  // 解绑浏览器与 Agent 的文件操作关联
+  unbindBrowserFromAgent(ws: WebSocket): void {
+    const browser = this.browsers.get(ws);
+    if (browser && browser.agentId) {
+      const browserSet = this.agentBrowsers.get(browser.agentId);
+      if (browserSet) {
+        browserSet.delete(ws);
+        if (browserSet.size === 0) {
+          this.agentBrowsers.delete(browser.agentId);
+        }
+      }
+    }
   }
 
   // 创建会话
@@ -159,9 +193,32 @@ class TunnelManager {
     return false;
   }
 
+  // 路由文件消息：Agent -> 所有绑定到该 Agent 的浏览器
+  routeFileMessageToBrowsers(agentId: string, message: unknown): void {
+    const browserSet = this.agentBrowsers.get(agentId);
+    if (browserSet) {
+      const messageStr = JSON.stringify(message);
+      for (const browserWs of browserSet) {
+        if (browserWs.readyState === WebSocket.OPEN) {
+          browserWs.send(messageStr);
+        }
+      }
+    }
+  }
+
   // 获取浏览器连接
   getBrowser(ws: WebSocket): BrowserConnection | undefined {
     return this.browsers.get(ws);
+  }
+
+  // 获取 Agent ID（通过 WebSocket）
+  getAgentIdByWs(ws: WebSocket): string | undefined {
+    for (const [agentId, conn] of this.agents) {
+      if (conn.ws === ws) {
+        return agentId;
+      }
+    }
+    return undefined;
   }
 
   // 获取用户可用的 Agent 列表

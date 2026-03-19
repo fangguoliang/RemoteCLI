@@ -13,7 +13,15 @@ export type MessageType =
   | 'session:resize'
   | 'session:close'
   | 'ping'
-  | 'pong';
+  | 'pong'
+  | 'file:browse'
+  | 'file:list'
+  | 'file:upload'
+  | 'file:progress'
+  | 'file:uploaded'
+  | 'file:download'
+  | 'file:data'
+  | 'file:error';
 
 export interface Message {
   type: MessageType;
@@ -67,4 +75,62 @@ export interface TerminalSettings {
   theme: 'dark' | 'light';
   fontFamily: string;
   fontSize: number;
+}
+
+// 文件管理相关类型
+export interface FileEntry {
+  name: string;
+  isDirectory: boolean;
+  size?: number;
+  modifiedAt?: number;
+}
+
+export interface FileBrowsePayload {
+  path: string;
+}
+
+export interface FileListPayload {
+  path: string;
+  entries: FileEntry[];
+}
+
+export interface FileUploadPayload {
+  path: string;
+  content: string;
+  chunkIndex: number;
+  totalChunks: number;
+  totalSize: number;
+  overwrite: boolean;
+}
+
+export interface FileDownloadPayload {
+  path: string;
+}
+
+export interface FileDataPayload {
+  path: string;
+  content: string;
+  chunkIndex: number;
+  totalChunks: number;
+  totalSize: number;
+}
+
+export interface FileProgressPayload {
+  path: string;
+  direction: 'upload' | 'download';
+  chunkIndex: number;
+  totalChunks: number;
+  percent: number;
+}
+
+export interface FileUploadedPayload {
+  path: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface FileErrorPayload {
+  code: string;
+  message: string;
+  path?: string;
 }

@@ -23,6 +23,7 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <router-link to="/files" class="action-btn" title="Files">Files</router-link>
         <div class="history-dropdown" v-if="historyTabs.length > 0">
           <button class="history-btn" @click="showHistory = !showHistory" title="历史记录">
             📋

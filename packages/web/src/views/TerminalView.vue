@@ -82,7 +82,7 @@
         <p>选择一个 Agent 开始终端会话</p>
         <p class="hint">点击上方 "Agents" 选择在线的 Agent</p>
       </div>
-      <TerminalTab v-for="tab in tabs" :key="tab.id" :tab="tab" :visible="tab.id === activeTabId" />
+      <TerminalTab v-for="tab in tabs" :key="tab.id" :tab="tab" :visible="tab.id === activeTabId" :auto-execute-commands="tab.autoExecuteCommands" />
     </div>
     <!-- 底部快捷键按钮 -->
     <div class="bottom-bar" v-if="tabs.length > 0">

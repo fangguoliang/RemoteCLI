@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//d/claudeworkspace/CCremote/packages/server/**)",
+      "Bash(pnpm build:*)"
+    ]
+  }
+}

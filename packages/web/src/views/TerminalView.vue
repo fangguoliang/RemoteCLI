@@ -453,8 +453,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   background: #16213e;
-  padding: 0.4rem 0.4rem;
-  gap: 0.3rem;
+  padding: 0.35rem 0.4rem;
+  gap: 0.25rem;
 }
 
 .agents-dropdown {
@@ -464,13 +464,13 @@ onUnmounted(() => {
 .dropdown-btn {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.4rem 0.6rem;
+  gap: 0.35rem;
+  padding: 0.45rem 0.6rem;
   background: #1a1a2e;
   border: none;
   border-radius: 4px;
   color: #e0e0e0;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -547,7 +547,7 @@ onUnmounted(() => {
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 0.2rem;
+  gap: 0.15rem;
   flex-shrink: 0;
 }
 
@@ -556,12 +556,12 @@ onUnmounted(() => {
 }
 
 .history-btn {
-  padding: 0.4rem;
+  padding: 0.45rem;
   background: none;
   border: none;
   color: #888;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 1.1rem;
 }
 
 .history-btn:hover {
@@ -604,13 +604,13 @@ onUnmounted(() => {
 }
 
 .action-btn {
-  padding: 0.4rem;
+  padding: 0.45rem;
   background: none;
   border: none;
   color: #888;
   text-decoration: none;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 1.1rem;
 }
 
 .action-btn:hover {

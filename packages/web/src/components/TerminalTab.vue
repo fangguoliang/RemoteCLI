@@ -36,6 +36,7 @@ const PROMPT_WAIT_INTERVAL = 500; // ms
 const PROMPT_WAIT_MAX_ATTEMPTS = 20; // 10 seconds total
 const COMMAND_SEND_DELAY = 300; // ms
 const COMMAND_START_DELAY = 500; // ms
+const TERMINAL_INIT_DELAY = 1500; // ms - wait for terminal to initialize
 
 // Execution state for cancellation
 let shouldAbortExecution = false;
@@ -253,6 +254,10 @@ async function executeCommandsSequentially(commands: string[]) {
 
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+  // Wait for terminal to initialize and show first prompt
+  console.log('Waiting for terminal initialization...');
+  await delay(TERMINAL_INIT_DELAY);
+
   for (const command of commands) {
     // Check if we should abort (component unmounted)
     if (shouldAbortExecution || !terminal) {
@@ -277,7 +282,7 @@ async function executeCommandsSequentially(commands: string[]) {
 
     if (shouldAbortExecution || !terminal) break;
 
-    // Send the command
+    console.log('Executing command:', command);
     sendInput(command + '\r');
 
     // Wait a bit for command to start executing

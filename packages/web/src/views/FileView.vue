@@ -93,6 +93,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useFileStore } from '@/stores/file';
 import { useAuthStore } from '@/stores/auth';
@@ -102,6 +103,7 @@ import { fileWebSocket } from '@/services/fileWebSocket';
 import FileList from '@/components/FileList.vue';
 import FileTransferProgress from '@/components/FileTransferProgress.vue';
 
+const router = useRouter();
 const fileStore = useFileStore();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
@@ -148,7 +150,11 @@ async function loadAgents(): Promise<void> {
   try {
     const token = authStore.accessToken;
     console.log('[FileView] loadAgents, token:', token ? 'exists' : 'missing');
-    if (!token) return;
+    if (!token) {
+      // Redirect to login if not authenticated
+      router.push('/login');
+      return;
+    }
 
     // Use configured apiUrl or fall back to current host
     const apiUrl = settingsStore.settings.apiUrl || `${window.location.protocol}//${window.location.host}`;
@@ -158,6 +164,13 @@ async function loadAgents(): Promise<void> {
         'Authorization': `Bearer ${token}`,
       },
     });
+
+    if (response.status === 401) {
+      // Token expired or invalid, redirect to login
+      authStore.clearTokens();
+      router.push('/login');
+      return;
+    }
 
     if (response.ok) {
       const data = await response.json();

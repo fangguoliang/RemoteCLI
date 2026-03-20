@@ -172,6 +172,8 @@ async function loadAgents(): Promise<void> {
     if (!token) {
       error.value = 'Not authenticated';
       loading.value = false;
+      // Redirect to login if not authenticated
+      router.push('/login');
       return;
     }
 
@@ -180,6 +182,13 @@ async function loadAgents(): Promise<void> {
         'Authorization': `Bearer ${token}`,
       },
     });
+
+    if (response.status === 401) {
+      // Token expired or invalid, redirect to login
+      authStore.clearTokens();
+      router.push('/login');
+      return;
+    }
 
     if (!response.ok) {
       error.value = `Server error: ${response.status}`;

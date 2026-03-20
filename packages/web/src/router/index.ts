@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { useTerminalStore } from '../stores/terminal';
 
 const routes = [
   { path: '/login', name: 'Login', component: () => import('../views/LoginView.vue'), meta: { requiresAuth: false } },
@@ -17,7 +18,9 @@ router.beforeEach(async (to, _from, next) => {
   // Check session validity on protected routes
   if (to.meta.requiresAuth) {
     if (!authStore.checkAndInitSession()) {
-      // Session expired or invalid, redirect to login
+      // Session expired or invalid, clear terminal state and redirect to login
+      const terminalStore = useTerminalStore();
+      terminalStore.clearCurrentSession();
       next('/login');
       return;
     }

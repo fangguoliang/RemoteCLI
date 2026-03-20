@@ -93,7 +93,7 @@
       <button class="key-btn arrow-btn" @click="sendKey('ArrowUp')">↑</button>
       <button class="key-btn arrow-btn" @click="sendKey('ArrowDown')">↓</button>
       <button class="key-btn arrow-btn" @click="sendKey('ArrowRight')">→</button>
-      <button class="key-btn bottom-btn" @click="scrollToBottom" title="滚动到底部">⬇</button>
+      <button class="key-btn bottom-btn arrow-btn" @click="scrollToBottom" title="滚动到底部">⬇</button>
     </div>
     <div class="footer-bar">
       <span class="author">作者@fangguoliang</span>
@@ -726,26 +726,32 @@ onUnmounted(() => {
 .bottom-bar {
   display: flex;
   align-items: center;
-  padding: 0.5rem;
+  justify-content: center;
+  padding: 0.4rem 0.3rem;
   background: #16213e;
-  gap: 0.5rem;
+  gap: 0.3rem;
 }
 
 .spacer {
-  flex: 1;
+  width: 0.5rem;
 }
 
 .key-btn {
-  padding: 0.75rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
   background: #252547;
   border: 1px solid #333;
   border-radius: 6px;
   color: #e0e0e0;
-  font-size: 1rem;
+  font-size: 0.9rem;
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   touch-action: manipulation;
+  flex-shrink: 0;
 }
 
 .key-btn:active {
@@ -755,16 +761,14 @@ onUnmounted(() => {
 
 .tab-btn {
   font-weight: bold;
+  font-size: 0.8rem;
 }
 
 .arrow-btn {
-  padding: 0.75rem 1rem;
-  min-width: 50px;
+  font-size: 1.1rem;
 }
 
 .bottom-btn {
-  padding: 0.75rem 1rem;
-  min-width: 50px;
   background: #4caf50;
 }
 
@@ -833,8 +837,7 @@ onUnmounted(() => {
 /* 记录按钮 */
 .capture-btn {
   background: #e94560;
-  min-width: 40px;
-  padding: 0.6rem 0.8rem;
+  font-size: 1.1rem;
 }
 
 .capture-btn:disabled {

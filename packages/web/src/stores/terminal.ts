@@ -363,6 +363,23 @@ export const useTerminalStore = defineStore('terminal', () => {
     return historyTabs.value[0] || null;
   }
 
+  // Get all session tabs for multi-session restoration (page refresh)
+  function getAllSessionTabs(): Tab[] {
+    const session = loadSessionData();
+    return session?.tabs || [];
+  }
+
+  // Get all history tabs for multi-session restoration (login)
+  function getAllHistoryTabsForRestore(): Tab[] {
+    return historyTabs.value;
+  }
+
+  // Get the stored active tab ID (for preserving active tab after restoration)
+  function getStoredActiveTabId(): string | null {
+    const session = loadSessionData();
+    return session?.activeTabId || null;
+  }
+
   // Clear current session only (used on logout, but keep history)
   function clearCurrentSession() {
     tabs.value = [];
@@ -459,6 +476,9 @@ export const useTerminalStore = defineStore('terminal', () => {
     unregisterTabScroller,
     getLastActiveTab,
     getLastHistoryTab,
+    getAllSessionTabs,
+    getAllHistoryTabsForRestore,
+    getStoredActiveTabId,
     clearCurrentSession,
     clearAll,
     captureCommand,

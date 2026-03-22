@@ -4,6 +4,7 @@ import jwt from '@fastify/jwt';
 import { config } from './config/index.js';
 import { initDatabase } from './db/index.js';
 import { authRoutes } from './routes/auth.js';
+import { adminRoutes } from './routes/admin.js';
 import { setupWebSocket } from './ws/index.js';
 
 const fastify = Fastify({ logger: true });
@@ -13,6 +14,7 @@ await fastify.register(jwt, { secret: config.jwtSecret });
 
 // Register routes
 await fastify.register(authRoutes);
+await fastify.register(adminRoutes);
 
 // Health check
 fastify.get('/api/health', async () => ({ status: 'ok', timestamp: Date.now() }));

@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 import cors from '@fastify/cors';
 import { authRoutes } from '../routes/auth.js';
+import { adminRoutes } from '../routes/admin.js';
 import { userModel } from '../db/index.js';
 
 async function buildServer() {
@@ -10,6 +11,7 @@ async function buildServer() {
   await fastify.register(cors, { origin: '*' });
   await fastify.register(jwt, { secret: 'test-secret-key-for-testing' });
   await fastify.register(authRoutes);
+  await fastify.register(adminRoutes);
   return fastify;
 }
 
@@ -205,6 +207,137 @@ describe('Authentication', () => {
       expect(response.statusCode).toBe(400);
       const body = JSON.parse(response.body);
       expect(body.error).toBe('密码至少6个字符');
+    });
+  });
+
+  describe('Admin endpoints', () => {
+    it('should allow admin to list users', async () => {
+      const fastify = await buildServer();
+
+      // Create admin user directly
+      await fastify.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        payload: { username: 'admin', password: 'admin123' },
+      });
+
+      // Login as admin
+      const loginResponse = await fastify.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'admin', password: 'admin123' },
+      });
+      const { accessToken } = JSON.parse(loginResponse.body);
+
+      // Get users
+      const response = await fastify.inject({
+        method: 'GET',
+        url: '/api/admin/users',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.users).toBeDefined();
+      expect(body.users.length).toBeGreaterThan(0);
+    });
+
+    it('should reject non-admin from admin endpoints', async () => {
+      const fastify = await buildServer();
+
+      // Create non-admin user
+      await fastify.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        payload: { username: 'normaluser', password: 'user123456' },
+      });
+
+      const loginResponse = await fastify.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'normaluser', password: 'user123456' },
+      });
+      const { accessToken } = JSON.parse(loginResponse.body);
+
+      const response = await fastify.inject({
+        method: 'GET',
+        url: '/api/admin/users',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
+    it('should allow admin to create user', async () => {
+      const fastify = await buildServer();
+
+      // Create and login as admin
+      await fastify.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        payload: { username: 'admin', password: 'admin123' },
+      });
+      const loginResponse = await fastify.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'admin', password: 'admin123' },
+      });
+      const { accessToken } = JSON.parse(loginResponse.body);
+
+      // Create user
+      const response = await fastify.inject({
+        method: 'POST',
+        url: '/api/admin/users',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        payload: { username: 'newuser', password: 'newpass123' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(true);
+      expect(body.userId).toBeDefined();
+    });
+
+    it('should allow admin to reset password', async () => {
+      const fastify = await buildServer();
+
+      // Create admin and a test user
+      await fastify.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        payload: { username: 'admin', password: 'admin123' },
+      });
+      await fastify.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        payload: { username: 'resetuser', password: 'oldpass123' },
+      });
+
+      // Login as admin
+      const loginResponse = await fastify.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'admin', password: 'admin123' },
+      });
+      const { accessToken } = JSON.parse(loginResponse.body);
+
+      // Reset password
+      const response = await fastify.inject({
+        method: 'POST',
+        url: '/api/admin/reset-password',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        payload: { username: 'resetuser' },
+      });
+
+      expect(response.statusCode).toBe(200);
+
+      // Verify can login with username as password
+      const resetLogin = await fastify.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'resetuser', password: 'resetuser' },
+      });
+      expect(resetLogin.statusCode).toBe(200);
     });
   });
 });

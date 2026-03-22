@@ -61,7 +61,9 @@
           </div>
         </div>
         <router-link to="/settings" class="action-btn" title="设置">⚙</router-link>
-        <button @click="logout" class="action-btn" title="登出">⏻</button>
+        <button @click="logout" class="action-btn power-btn" title="登出">
+          <span class="power-icon"></span>
+        </button>
       </div>
     </div>
     <!-- 会话标签栏 - 第二行 -->
@@ -93,7 +95,9 @@
       <button class="key-btn arrow-btn" @click="sendKey('ArrowUp')">↑</button>
       <button class="key-btn arrow-btn" @click="sendKey('ArrowDown')">↓</button>
       <button class="key-btn arrow-btn" @click="sendKey('ArrowRight')">→</button>
-      <button class="key-btn bottom-btn arrow-btn" @click="scrollToBottom" title="滚动到底部">⬇</button>
+      <button class="key-btn bottom-btn" @click="scrollToBottom" title="滚动到底部">
+        <span class="to-bottom-icon"></span>
+      </button>
     </div>
     <div class="footer-bar">
       <span class="author">作者@fangguoliang</span>
@@ -678,6 +682,31 @@ onUnmounted(() => {
   color: #e94560;
 }
 
+/* Power button icon */
+.power-btn {
+  position: relative;
+}
+
+.power-icon {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  position: relative;
+}
+
+.power-icon::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 7px;
+  background: currentColor;
+}
+
 /* 会话标签栏 - 第二行 */
 .tabs-bar {
   display: flex;
@@ -836,6 +865,30 @@ onUnmounted(() => {
 
 .bottom-btn:active {
   background: #388e3c;
+}
+
+/* To bottom icon */
+.to-bottom-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.to-bottom-icon::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid #fff;
+}
+
+.to-bottom-icon::after {
+  content: '';
+  width: 14px;
+  height: 2px;
+  background: #fff;
 }
 
 /* 底部作者栏 */

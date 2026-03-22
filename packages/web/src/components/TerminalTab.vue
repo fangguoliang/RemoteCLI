@@ -327,8 +327,22 @@ defineExpose({
 </script>
 
 <style scoped>
-.terminal-wrapper { position: absolute; inset: 0; touch-action: pan-y; }
+.terminal-wrapper {
+  position: absolute;
+  inset: 0;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
 .terminal { width: 100%; height: 100%; }
 .status-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(26, 26, 46, 0.9); color: #e0e0e0; }
 .status-overlay.error { color: #e94560; }
+
+/* xterm.js 滚动优化 */
+.terminal-wrapper :deep(.xterm) {
+  touch-action: pan-y;
+}
+.terminal-wrapper :deep(.xterm-viewport) {
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
 </style>

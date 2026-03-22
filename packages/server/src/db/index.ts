@@ -99,6 +99,23 @@ export const userModel = {
       updated_at: number;
     }>('SELECT * FROM users WHERE id = ?', [id]);
   },
+
+  findAll: () => {
+    return queryAll<{
+      id: number;
+      username: string;
+      created_at: number;
+    }>('SELECT id, username, created_at FROM users ORDER BY id');
+  },
+
+  updatePassword: (username: string, passwordHash: string) => {
+    const now = Date.now();
+    runStatement(
+      'UPDATE users SET password_hash = ?, updated_at = ? WHERE username = ?',
+      [passwordHash, now, username]
+    );
+    saveDatabase();
+  },
 };
 
 // Agent 相关操作

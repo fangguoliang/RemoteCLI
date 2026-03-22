@@ -27,6 +27,27 @@
           </div>
         </div>
       </div>
+      <!-- Shortcuts Dropdown -->
+      <div class="shortcuts-dropdown">
+        <button class="dropdown-btn" @click="showShortcuts = !showShortcuts" :disabled="fileShortcuts.length === 0">
+          快捷方式 ({{ fileShortcuts.length }})
+          <span class="arrow" :class="{ open: showShortcuts }">v</span>
+        </button>
+        <div class="dropdown-menu" v-show="showShortcuts">
+          <div v-if="fileShortcuts.length === 0" class="menu-item no-shortcuts">
+            暂无快捷方式
+          </div>
+          <div v-else>
+            <div v-for="shortcut in fileShortcuts" :key="shortcut.id" class="menu-item shortcut-item" @click="executeFileShortcut(shortcut)">
+              <div class="shortcut-info">
+                <span class="shortcut-name">{{ shortcut.name }}</span>
+                <span class="shortcut-path">{{ shortcut.path }}</span>
+              </div>
+              <button class="delete-btn" @click.stop="deleteFileShortcut(shortcut.id)" title="删除" aria-label="删除快捷方式">×</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <router-link to="/terminal" class="nav-btn" title="Terminal">Terminal</router-link>
     </div>
 
@@ -74,6 +95,9 @@
       <button class="action-btn" @click="refresh">
         <span>~</span> Refresh
       </button>
+      <button class="action-btn save-btn" @click="openSaveModal" :disabled="!currentPath">
+        <span>📍</span> 保存
+      </button>
     </div>
 
     <!-- Hidden File Input -->
@@ -83,6 +107,29 @@
       style="display: none"
       @change="onFileSelected"
     />
+
+    <!-- Save Shortcut Modal -->
+    <div class="modal-overlay" v-if="showSaveModal" @click.self="closeSaveModal" @keydown.escape="closeSaveModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>保存快捷方式</h3>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>名称</label>
+            <input v-model="shortcutName" placeholder="输入快捷方式名称" @keyup.enter="saveShortcutHandler" />
+          </div>
+          <div class="form-group">
+            <label>路径</label>
+            <div class="current-path">{{ currentPath }}</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-cancel" @click="closeSaveModal">取消</button>
+          <button class="btn-save" @click="saveShortcutHandler" :disabled="!shortcutName.trim()">保存</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Footer Bar -->
     <div class="footer-bar">
@@ -102,12 +149,14 @@ import { useTerminalStore } from '@/stores/terminal';
 import { fileWebSocket } from '@/services/fileWebSocket';
 import FileList from '@/components/FileList.vue';
 import FileTransferProgress from '@/components/FileTransferProgress.vue';
+import { useFileShortcutsStore } from '@/stores/fileShortcuts';
 
 const router = useRouter();
 const fileStore = useFileStore();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
+const fileShortcutsStore = useFileShortcutsStore();
 
 const { entries, loading, error, currentPath, transfers } = storeToRefs(fileStore);
 
@@ -116,6 +165,10 @@ const showAgents = ref(false);
 const loadingAgents = ref(false);
 const selectedAgentId = ref<string | null>(null);
 const gotoPath = ref('');
+const showShortcuts = ref(false);
+const showSaveModal = ref(false);
+const shortcutName = ref('');
+const fileShortcuts = computed(() => fileShortcutsStore.shortcuts);
 
 const agents = computed(() => {
   console.log('[FileView] computing agents, terminalStore.agents:', terminalStore.agents);
@@ -289,11 +342,70 @@ function goToPath(): void {
   gotoPath.value = '';
 }
 
+// Open save shortcut modal
+function openSaveModal() {
+  if (!currentPath.value || !selectedAgentId.value) return;
+  shortcutName.value = '';
+  showSaveModal.value = true;
+}
+
+// Close save shortcut modal
+function closeSaveModal() {
+  showSaveModal.value = false;
+  shortcutName.value = '';
+}
+
+// Save shortcut handler
+function saveShortcutHandler() {
+  if (!shortcutName.value.trim() || !currentPath.value || !selectedAgentId.value) return;
+
+  const success = fileShortcutsStore.saveShortcut(
+    shortcutName.value,
+    currentPath.value,
+    selectedAgentId.value
+  );
+
+  if (success) {
+    closeSaveModal();
+  }
+}
+
+// Execute file shortcut (navigate to path)
+function executeFileShortcut(shortcut: typeof fileShortcuts.value[0]) {
+  showShortcuts.value = false;
+
+  // Check if agent is online
+  const agent = agents.value.find(a => a.agentId === shortcut.agentId);
+  if (!agent?.online) {
+    alert(`Agent "${shortcut.agentId}" 离线，无法跳转`);
+    return;
+  }
+
+  // If different agent, switch to it first
+  if (shortcut.agentId !== selectedAgentId.value) {
+    selectedAgentId.value = shortcut.agentId;
+  }
+
+  // Navigate to the path
+  fileStore.setLoading(true);
+  fileWebSocket.browse(shortcut.path, shortcut.agentId);
+}
+
+// Delete file shortcut
+function deleteFileShortcut(id: string) {
+  if (confirm('确定删除此快捷方式？')) {
+    fileShortcutsStore.deleteShortcut(id);
+  }
+}
+
 // Close dropdown when clicking outside
 function handleClickOutside(e: MouseEvent): void {
   const target = e.target as HTMLElement;
   if (!target.closest('.agents-dropdown')) {
     showAgents.value = false;
+  }
+  if (!target.closest('.shortcuts-dropdown')) {
+    showShortcuts.value = false;
   }
 }
 
@@ -565,5 +677,194 @@ watch(onlineAgents, (newOnlineAgents) => {
 .author {
   font-size: 0.7rem;
   color: #666;
+}
+
+/* Shortcuts dropdown */
+.shortcuts-dropdown {
+  position: relative;
+}
+
+.shortcuts-dropdown .dropdown-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.shortcut-item {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.shortcut-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.shortcut-name {
+  color: #e0e0e0;
+}
+
+.shortcut-path {
+  font-size: 0.75rem;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delete-btn {
+  padding: 0.25rem 0.5rem;
+  background: transparent;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.delete-btn:hover {
+  color: #e94560;
+}
+
+/* Save button */
+.save-btn {
+  background: #e94560;
+}
+
+.save-btn:hover:not(:disabled) {
+  background: #ff6b6b;
+}
+
+.save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Modal styles */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: #16213e;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 400px;
+  max-height: 80vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  padding: 1rem;
+  border-bottom: 1px solid #333;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: #e0e0e0;
+}
+
+.modal-body {
+  padding: 1rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group:last-child {
+  margin-bottom: 0;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: #888;
+  font-size: 0.85rem;
+}
+
+.form-group input[type="text"] {
+  width: 100%;
+  padding: 0.5rem;
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 1rem;
+  box-sizing: border-box;
+}
+
+.form-group input[type="text"]:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+.current-path {
+  padding: 0.5rem;
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #4fc3f7;
+  font-family: monospace;
+  font-size: 0.9rem;
+  word-break: break-all;
+}
+
+.modal-footer {
+  padding: 1rem;
+  border-top: 1px solid #333;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.btn-cancel,
+.btn-save {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.btn-cancel {
+  background: #333;
+  color: #e0e0e0;
+}
+
+.btn-cancel:hover {
+  background: #444;
+}
+
+.btn-save {
+  background: #e94560;
+  color: #fff;
+}
+
+.btn-save:hover:not(:disabled) {
+  background: #ff6b6b;
+}
+
+.btn-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.menu-item.no-shortcuts {
+  color: #888;
+  cursor: default;
 }
 </style>

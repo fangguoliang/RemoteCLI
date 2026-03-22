@@ -1,5 +1,5 @@
 <template>
-  <div class="terminal-page">
+  <div class="terminal-page" ref="terminalPageRef">
     <!-- 顶部工具栏 -->
     <div class="topbar">
       <div class="agents-dropdown">
@@ -164,6 +164,34 @@ const selectedCommandTexts = computed(() => {
     .map(cmd => cmd.text);
 });
 
+// Reference to terminal page element for visual viewport handling
+const terminalPageRef = ref<HTMLElement | null>(null);
+
+// Handle visual viewport changes for mobile keyboard
+function setupVisualViewportHandling(): (() => void) | null {
+  if (!('visualViewport' in window) || !terminalPageRef.value) return null;
+
+  const terminalPage = terminalPageRef.value;
+
+  const handleViewportChange = () => {
+    // Adjust container height based on visual viewport
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+    terminalPage.style.height = `${viewportHeight}px`;
+  };
+
+  window.visualViewport?.addEventListener('resize', handleViewportChange);
+  window.visualViewport?.addEventListener('scroll', handleViewportChange);
+
+  // Initial setup
+  handleViewportChange();
+
+  // Return cleanup function
+  return () => {
+    window.visualViewport?.removeEventListener('resize', handleViewportChange);
+    window.visualViewport?.removeEventListener('scroll', handleViewportChange);
+  };
+}
+
 async function loadAgents(): Promise<void> {
   loading.value = true;
   error.value = '';
@@ -210,6 +238,7 @@ async function loadAgents(): Promise<void> {
 
 let intervalId: number | null = null;
 let sessionRestored = false;
+let cleanupViewportHandling: (() => void) | null = null;
 
 onMounted(() => {
   loadAgents().then(() => {
@@ -220,6 +249,8 @@ onMounted(() => {
     }
   });
   intervalId = window.setInterval(loadAgents, 5000);
+  // Setup visual viewport handling for mobile keyboard
+  cleanupViewportHandling = setupVisualViewportHandling();
 });
 
 // Restore all sessions from storage
@@ -253,6 +284,7 @@ function restoreLastSession() {
 
 onUnmounted(() => {
   if (intervalId) clearInterval(intervalId);
+  if (cleanupViewportHandling) cleanupViewportHandling();
 });
 
 function selectAgent(agentId: string) {

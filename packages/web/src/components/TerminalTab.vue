@@ -55,11 +55,56 @@ onUnmounted(() => {
   cleanup();
 });
 
-watch(() => props.visible, (visible) => {
+watch(() => props.visible, (visible, wasVisible) => {
+  // Save scrollback when leaving this tab
+  if (wasVisible && !visible) {
+    saveScrollback();
+  }
+  // Fit and scroll to bottom when switching back to this tab
   if (visible && fitAddon && terminalRef.value) {
-    setTimeout(() => fitAddon?.fit(), 0);
+    // Use requestAnimationFrame for better timing after v-show
+    requestAnimationFrame(() => {
+      if (!terminal || !fitAddon) return;
+      fitAddon.fit();
+
+      // Use multiple frames to ensure DOM and terminal state are synced
+      requestAnimationFrame(() => {
+        if (!terminal) return;
+        // Force terminal to recalculate its dimensions
+        terminal.scrollToBottom();
+
+        // Additional scroll attempt after a short delay
+        setTimeout(() => {
+          if (!terminal || !fitAddon) return;
+          fitAddon.fit();
+          terminal.scrollToBottom();
+
+          // Check if viewport is compressed (keyboard open) and refit
+          const isKeyboardOpen = window.visualViewport && window.visualViewport.height < window.innerHeight;
+          if (isKeyboardOpen) {
+            setTimeout(() => {
+              fitAddon?.fit();
+              terminal?.scrollToBottom();
+              tryFocus();
+            }, 100);
+          } else {
+            tryFocus();
+          }
+        }, 100);
+      });
+    });
   }
 });
+
+// Try to focus terminal with retries
+function tryFocus(attempts = 0) {
+  if (!terminal) return;
+  terminal.focus();
+  // Check if focus succeeded, retry if not
+  if (document.activeElement?.tagName !== 'TEXTAREA' && attempts < 3) {
+    setTimeout(() => tryFocus(attempts + 1), 50);
+  }
+}
 
 function initTerminal() {
   if (!terminalRef.value) return;
@@ -67,7 +112,12 @@ function initTerminal() {
   terminal = new Terminal({
     fontFamily: settingsStore.settings.fontFamily,
     fontSize: settingsStore.settings.fontSize,
-    theme: { background: '#1a1a2e', foreground: '#e0e0e0', cursor: '#e94560' },
+    theme: {
+      background: '#1a1a2e',
+      foreground: '#e0e0e0',
+      cursor: '#e94560',
+      cursorAccent: '#1a1a2e', // Cursor background color
+    },
     scrollback: 10000,
     scrollSensitivity: 30,
   });
@@ -93,6 +143,9 @@ function initTerminal() {
 
   // Setup touch event handling for pull-to-refresh prevention
   setupTouchHandling();
+
+  // Setup visual viewport handling for mobile keyboard
+  setupVisualViewportHandling();
 
   terminal.onData((data) => {
     // Capture command when user presses Enter
@@ -327,6 +380,30 @@ async function executeCommandsSequentially(commands: string[]) {
   console.log('[TerminalTab] Command execution complete');
 }
 
+// Setup visual viewport handling for mobile keyboard
+let viewportResizeHandler: (() => void) | null = null;
+
+function setupVisualViewportHandling() {
+  if (!('visualViewport' in window)) return;
+
+  const handleViewportChange = () => {
+    if (fitAddon && terminalRef.value) {
+      // Delay to let the layout settle
+      setTimeout(() => {
+        fitAddon?.fit();
+        // Scroll cursor into view after resize
+        terminal?.scrollToBottom();
+      }, 100);
+    }
+  };
+
+  window.visualViewport?.addEventListener('resize', handleViewportChange);
+  window.visualViewport?.addEventListener('scroll', handleViewportChange);
+
+  // Store handler for cleanup
+  viewportResizeHandler = handleViewportChange;
+}
+
 // Setup touch handling to prevent pull-to-refresh
 function setupTouchHandling() {
   if (!terminalRef.value) return;
@@ -423,6 +500,13 @@ function cleanup() {
   if (saveScrollbackTimer) {
     clearInterval(saveScrollbackTimer);
     saveScrollbackTimer = null;
+  }
+
+  // Cleanup visual viewport listeners
+  if (viewportResizeHandler) {
+    window.visualViewport?.removeEventListener('resize', viewportResizeHandler);
+    window.visualViewport?.removeEventListener('scroll', viewportResizeHandler);
+    viewportResizeHandler = null;
   }
 
   // Save scrollback before cleanup

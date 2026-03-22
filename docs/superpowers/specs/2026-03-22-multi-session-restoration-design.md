@@ -41,7 +41,7 @@ function getStoredActiveTabId(): string | null {
 }
 ```
 
-Export these functions in the store's return statement.
+Export these functions in the store's return statement (add to the return object around line 437-468).
 
 ### 2. TerminalView.vue - Modify restoreLastSession()
 
@@ -85,21 +85,30 @@ The existing implementation already handles offline agents:
 | Scenario | Behavior |
 |----------|----------|
 | Agent offline | Tab is created, shows "disconnected" state, will connect when agent comes online |
+| Mixed agent status (some online, some offline) | All tabs restored; online agents connect immediately, offline agents show "disconnected" |
 | Session expired on server | `session:resumed` fails, new session is created automatically |
 | Multiple tabs, some with same agent | All tabs restored independently |
 | No previous sessions | Empty state shown, no restoration |
+| MAX_HISTORY reached (10 tabs) | All 10 tabs restored on login; user can close unwanted tabs |
+
+**Design Decision: Offline Agent Handling**
+
+User confirmed: When an agent is offline, the tab should still be restored and show "disconnected" state. This allows the user to see their session history and have the tab auto-connect when the agent comes back online.
 
 ## Testing Checklist
 
 - [ ] Refresh page with 2+ active sessions → all sessions restored
 - [ ] Login with history of 2+ sessions → all sessions restored
 - [ ] Refresh with offline agent → tab created in disconnected state
+- [ ] Mixed agent status (online + offline) → all tabs restored with correct states
 - [ ] Resume fails (session expired) → new session created
 - [ ] Active tab is preserved after restoration
+- [ ] Login with 10 history tabs → all 10 tabs restored (MAX_HISTORY limit)
 
 ## Implementation Notes
 
 - The `activeTabId` is explicitly restored from sessionStorage after all tabs are restored
 - `restoreTab()` sets `activeTabId` to each restored tab, so we must call `setActiveTab()` at the end
-- `restoreTab()` already checks for duplicate tabs by `sessionId`, preventing duplicates
+- `restoreTab()` already checks for duplicate tabs by `sessionId` (line 216-220), preventing duplicates if called multiple times
 - History tabs are kept in localStorage (max 10), providing reasonable limit for restoration
+- The current behavior clears session if agent is offline (lines 244-247 in TerminalView.vue) - this will be removed since we now restore all tabs regardless of agent status

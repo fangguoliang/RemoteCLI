@@ -1,6 +1,6 @@
-# CCremote 部署手册
+# remoteCli 部署手册
 
-本文档详细介绍如何将 CCremote 部署到生产环境。
+本文档详细介绍如何将 remoteCli 部署到生产环境。
 
 ---
 
@@ -62,8 +62,8 @@ npm install -g pnpm
 ### 3. 克隆项目
 
 ```bash
-git clone https://github.com/your-username/ccremote.git
-cd ccremote
+git clone https://github.com/your-username/remotecli.git
+cd remotecli
 ```
 
 ### 4. 安装依赖
@@ -89,7 +89,7 @@ PORT=3000
 JWT_SECRET=your-very-strong-random-secret-key-here
 
 # 数据库路径
-DATABASE_PATH=./data/ccremote.db
+DATABASE_PATH=./data/remotecli.db
 
 # 环境
 NODE_ENV=production
@@ -112,9 +112,9 @@ npm install -g pm2
 cat > ecosystem.config.js << 'EOF'
 module.exports = {
   apps: [{
-    name: 'ccremote-server',
+    name: 'remotecli-server',
     script: 'dist/index.js',
-    cwd: '/path/to/ccremote/packages/server',
+    cwd: '/path/to/remotecli/packages/server',
     instances: 1,
     autorestart: true,
     watch: false,
@@ -153,7 +153,7 @@ pm2 save
 
 ```powershell
 # 创建目录
-mkdir C:\CCremote\agent
+mkdir C:\remoteCli\agent
 
 # 复制文件（从项目 packages/agent 目录）
 # 或者直接克隆整个项目
@@ -162,14 +162,14 @@ mkdir C:\CCremote\agent
 ### 4. 安装依赖
 
 ```powershell
-cd C:\CCremote\agent
+cd C:\remoteCli\agent
 npm install -g pnpm
 pnpm install
 ```
 
 ### 5. 配置环境变量
 
-创建 `C:\CCremote\agent\.env`:
+创建 `C:\remoteCli\agent\.env`:
 
 ```env
 # 服务器地址 (修改为你的服务器地址)
@@ -200,33 +200,33 @@ pnpm build
 # https://nssm.cc/download
 
 # 解压后运行
-nssm install CCremoteAgent
+nssm install RemoteCliAgent
 
 # 在 GUI 中配置:
 # Application Path: C:\Program Files\nodejs\node.exe
-# Startup Directory: C:\CCremote\agent
+# Startup Directory: C:\remoteCli\agent
 # Arguments: dist\index.js
 
 # 或者命令行配置:
-nssm install CCremoteAgent "C:\Program Files\nodejs\node.exe"
-nssm set CCremoteAgent AppDirectory "C:\CCremote\agent"
-nssm set CCremoteAgent AppParameters "dist\index.js"
-nssm set CCremoteAgent DisplayName "CCremote Agent"
-nssm set CCremoteAgent Description "Remote PowerShell Terminal Agent"
-nssm set CCremoteAgent Start SERVICE_AUTO_START
+nssm install RemoteCliAgent "C:\Program Files\nodejs\node.exe"
+nssm set RemoteCliAgent AppDirectory "C:\remoteCli\agent"
+nssm set RemoteCliAgent AppParameters "dist\index.js"
+nssm set RemoteCliAgent DisplayName "remoteCli Agent"
+nssm set RemoteCliAgent Description "Remote PowerShell Terminal Agent"
+nssm set RemoteCliAgent Start SERVICE_AUTO_START
 
 # 启动服务
-nssm start CCremoteAgent
+nssm start RemoteCliAgent
 ```
 
 ### 8. 验证运行
 
 ```powershell
 # 查看服务状态
-nssm status CCremoteAgent
+nssm status RemoteCliAgent
 
 # 查看日志
-nssm logs CCremoteAgent
+nssm logs RemoteCliAgent
 ```
 
 ---
@@ -264,7 +264,7 @@ pnpm build
 ### 完整配置示例
 
 ```nginx
-# /etc/nginx/sites-available/ccremote
+# /etc/nginx/sites-available/remotecli
 server {
     listen 80;
     server_name your-server.com;
@@ -288,7 +288,7 @@ server {
 
     # 前端静态文件
     location / {
-        root /var/www/ccremote/web/dist;
+        root /var/www/remotecli/web/dist;
         try_files $uri $uri/ /index.html;
 
         # 缓存静态资源
@@ -329,7 +329,7 @@ server {
 启用配置:
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/ccremote /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/remotecli /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -362,13 +362,13 @@ sudo certbot renew --dry-run
 pm2 status
 
 # 查看日志
-pm2 logs ccremote-server
+pm2 logs remotecli-server
 
 # 重启服务
-pm2 restart ccremote-server
+pm2 restart remotecli-server
 
 # 停止服务
-pm2 stop ccremote-server
+pm2 stop remotecli-server
 
 # 监控
 pm2 monit
@@ -378,16 +378,16 @@ pm2 monit
 
 ```powershell
 # 查看状态
-sc query CCremoteAgent
+sc query RemoteCliAgent
 
 # 启动
-net start CCremoteAgent
+net start RemoteCliAgent
 
 # 停止
-net stop CCremoteAgent
+net stop RemoteCliAgent
 
 # 重启
-net stop CCremoteAgent && net start CCremoteAgent
+net stop RemoteCliAgent && net start RemoteCliAgent
 ```
 
 ---
@@ -398,25 +398,25 @@ net stop CCremoteAgent && net start CCremoteAgent
 
 ```bash
 # PM2 日志
-pm2 logs ccremote-server
+pm2 logs remotecli-server
 
 # 日志文件位置
-~/.pm2/logs/ccremote-server-*.log
+~/.pm2/logs/remotecli-server-*.log
 ```
 
 ### Agent 日志
 
 Windows 事件查看器:
-- 应用程序和服务日志 → CCremoteAgent
+- 应用程序和服务日志 → RemoteCliAgent
 
 ### 数据库备份
 
 ```bash
 # 备份 SQLite 数据库
-cp packages/server/data/ccremote.db packages/server/data/ccremote.db.backup
+cp packages/server/data/remotecli.db packages/server/data/remotecli.db.backup
 
 # 定时备份 (crontab)
-0 2 * * * cp /path/to/ccremote/packages/server/data/ccremote.db /backup/ccremote-$(date +\%Y\%m\%d).db
+0 2 * * * cp /path/to/remotecli/packages/server/data/remotecli.db /backup/remotecli-$(date +\%Y\%m\%d).db
 ```
 
 ---
@@ -465,7 +465,7 @@ pnpm audit
 ### 服务无法启动
 
 1. 检查端口占用: `lsof -i :3000`
-2. 检查日志: `pm2 logs ccremote-server`
+2. 检查日志: `pm2 logs remotecli-server`
 3. 检查环境变量: `.env` 文件
 
 ### Agent 连接失败
@@ -479,7 +479,7 @@ pnpm audit
 
 ```bash
 # 从备份恢复
-cp /backup/ccremote-latest.db packages/server/data/ccremote.db
+cp /backup/remotecli-latest.db packages/server/data/remotecli.db
 ```
 
 ---
@@ -488,7 +488,7 @@ cp /backup/ccremote-latest.db packages/server/data/ccremote.db
 
 ```bash
 # 停止服务
-pm2 stop ccremote-server
+pm2 stop remotecli-server
 
 # 拉取最新代码
 git pull
@@ -500,11 +500,11 @@ pnpm install
 pnpm build
 
 # 启动服务
-pm2 start ccremote-server
+pm2 start remotecli-server
 ```
 
 ---
 
 ## 联系支持
 
-遇到部署问题请提交 Issue: https://github.com/your-username/ccremote/issues
+遇到部署问题请提交 Issue: https://github.com/your-username/remotecli/issues

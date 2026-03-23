@@ -10,8 +10,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'icons/*.svg'],
       manifest: {
-        name: 'CCremote - PowerShell Terminal',
-        short_name: 'CCremote',
+        name: 'remoteCli - PowerShell Terminal',
+        short_name: 'remoteCli',
         description: '远程 PowerShell 终端',
         theme_color: '#1a1a2e',
         background_color: '#1a1a2e',

@@ -1,10 +1,10 @@
-# CCremote 设计文档
+# remoteCli 设计文档
 
 > 远程 PowerShell 终端系统
 
 ## 概述
 
-CCremote 是一个允许用户通过手机浏览器远程访问 Windows PowerShell 终端的系统。采用反向隧道架构，Windows 主动连接公网服务器，手机通过服务器中转访问终端。
+remoteCli 是一个允许用户通过手机浏览器远程访问 Windows PowerShell 终端的系统。采用反向隧道架构，Windows 主动连接公网服务器，手机通过服务器中转访问终端。
 
 ## 架构
 

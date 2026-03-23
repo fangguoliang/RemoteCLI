@@ -1,4 +1,4 @@
-# CCremote 实施计划
+# remoteCli 实施计划
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
@@ -23,7 +23,7 @@
 **Step 1: 初始化项目根目录**
 
 ```bash
-cd D:/claudeworkspace/CCremote
+cd D:/claudeworkspace/remoteCli
 git init
 ```
 
@@ -105,7 +105,7 @@ mkdir -p packages/shared/src
 
 ```json
 {
-  "name": "@ccremote/shared",
+  "name": "@remotecli/shared",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -1385,7 +1385,7 @@ export class Tunnel {
 import 'dotenv/config';
 import { Tunnel } from './tunnel.js';
 
-console.log('CCremote Agent starting...');
+console.log('remoteCli Agent starting...');
 
 const tunnel = new Tunnel();
 tunnel.connect();
@@ -1446,8 +1446,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'icons/*.png'],
       manifest: {
-        name: 'CCremote - PowerShell Terminal',
-        short_name: 'CCremote',
+        name: 'remoteCli - PowerShell Terminal',
+        short_name: 'remoteCli',
         description: '远程 PowerShell 终端',
         theme_color: '#1a1a2e',
         background_color: '#1a1a2e',
@@ -1768,7 +1768,7 @@ export default router;
 <template>
   <div class="login-container">
     <div class="login-card">
-      <h1>CCremote</h1>
+      <h1>remoteCli</h1>
       <p>远程 PowerShell 终端</p>
 
       <form @submit.prevent="handleLogin">
@@ -2450,7 +2450,7 @@ git commit -m "test(server): add authentication tests"
 **Step 1: 创建 README**
 
 ```markdown
-# CCremote
+# remoteCli
 
 远程 PowerShell 终端系统 - 通过手机浏览器访问 Windows PowerShell。
 

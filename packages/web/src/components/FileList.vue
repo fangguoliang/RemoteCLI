@@ -20,7 +20,7 @@
 </template>
 
 <script setup lang="ts">
-import type { FileEntry } from '@ccremote/shared';
+import type { FileEntry } from '@remotecli/shared';
 
 defineProps<{
   entries: FileEntry[];

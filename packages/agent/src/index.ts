@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { Tunnel } from './tunnel.js';
 
-console.log('CCremote Agent starting...');
+console.log('remoteCli Agent starting...');
 
 const tunnel = new Tunnel();
 tunnel.connect();

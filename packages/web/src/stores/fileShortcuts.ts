@@ -9,7 +9,7 @@ export interface FileShortcut {
   createdAt: number;
 }
 
-const SHORTCUTS_KEY = 'ccremote-file-shortcuts';
+const SHORTCUTS_KEY = 'remotecli-file-shortcuts';
 const MAX_SHORTCUTS = 10;
 
 function loadShortcuts(): FileShortcut[] {

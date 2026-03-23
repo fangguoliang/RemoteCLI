@@ -1,9 +1,9 @@
-# CCremote 推广内容
+# remoteCli 推广内容
 
 ## 短推文版 (微博/推特)
 
 ```
-🚀 重磅发布：CCremote - 手机远程控制 Windows 终端！
+🚀 重磅发布：remoteCli - 手机远程控制 Windows 终端！
 
 📱 手机浏览器直连，无需安装 APP
 🔐 JWT 认证 + 用户管理，安全可靠
@@ -21,7 +21,7 @@ GitHub: https://github.com/fangguoliang/claude-code-remote
 
 ## 长推文版 (知乎/公众号)
 
-### 标题：手机变身远程终端！CCremote 让你在任何地方操控 Windows PowerShell
+### 标题：手机变身远程终端！remoteCli 让你在任何地方操控 Windows PowerShell
 
 ---
 
@@ -31,7 +31,7 @@ GitHub: https://github.com/fangguoliang/claude-code-remote
 - 出差在外，急需查看服务器日志
 - 躺在床上，想用手机跑个脚本
 
-**CCremote 完美解决这些问题！**
+**remoteCli 完美解决这些问题！**
 
 ---
 
@@ -84,7 +84,7 @@ cd claude-code-remote/packages/server
 cp .env.example .env
 # 配置 JWT_SECRET 和 ADMIN_PASSWORD
 pnpm install && pnpm build
-pm2 start dist/index.js --name ccremote
+pm2 start dist/index.js --name remotecli
 ```
 
 ### Agent (Windows)
@@ -130,9 +130,9 @@ pnpm install && pnpm build
 
 ---
 
-## 🌟 为什么选择 CCremote？
+## 🌟 为什么选择 remoteCli？
 
-| 特性 | CCremote | 传统方案 |
+| 特性 | remoteCli | 传统方案 |
 |------|----------|----------|
 | 安装 | 浏览器直连 | 需要 SSH 客户端 |
 | 网络要求 | 无需公网 IP | 需要端口转发/内网穿透 |

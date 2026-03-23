@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CCremote is a remote PowerShell terminal system that allows accessing Windows PowerShell from a mobile browser. It uses a reverse tunnel architecture where the Windows Agent initiates the connection to the cloud server, eliminating the need for public IP or port forwarding.
+remoteCli is a remote PowerShell terminal system that allows accessing Windows PowerShell from a mobile browser. It uses a reverse tunnel architecture where the Windows Agent initiates the connection to the cloud server, eliminating the need for public IP or port forwarding.
 
 **Architecture:**
 ```

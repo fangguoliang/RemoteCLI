@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 为 CCremote 添加文件管理功能，支持浏览 Windows Agent 文件系统并上传/下载文件。
+**Goal:** 为 remoteCli 添加文件管理功能，支持浏览 Windows Agent 文件系统并上传/下载文件。
 
 **Architecture:** 纯 WebSocket 方案，复用现有连接，服务器作为消息路由器。文件分块传输（1MB/块），Base64 编码，支持进度显示。
 
@@ -132,7 +132,7 @@ git commit -m "feat(shared): add file management types"
 ```typescript
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import type { FileEntry } from '@ccremote/shared';
+import type { FileEntry } from '@remotecli/shared';
 
 export class FileManager {
   async browse(dirPath: string): Promise<FileEntry[]> {
@@ -639,7 +639,7 @@ git commit -m "feat(server): route file messages between browser and agent"
 ```typescript
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { FileEntry } from '@ccremote/shared';
+import type { FileEntry } from '@remotecli/shared';
 
 export interface TransferProgress {
   id: string;
@@ -745,7 +745,7 @@ git commit -m "feat(web): add file store for state management"
 **Step 1: 创建文件 WebSocket 服务**
 
 ```typescript
-import type { FileEntry, FileListPayload, FileProgressPayload, FileDataPayload, FileUploadedPayload, FileErrorPayload } from '@ccremote/shared';
+import type { FileEntry, FileListPayload, FileProgressPayload, FileDataPayload, FileUploadedPayload, FileErrorPayload } from '@remotecli/shared';
 import { useFileStore } from '@/stores/file';
 
 type MessageHandler = (data: unknown) => void;
@@ -1087,7 +1087,7 @@ git commit -m "feat(web): add file WebSocket service"
 </template>
 
 <script setup lang="ts">
-import type { FileEntry } from '@ccremote/shared';
+import type { FileEntry } from '@remotecli/shared';
 
 defineProps<{
   entries: FileEntry[];

@@ -15,8 +15,8 @@ COPY data/ ./data/
 # Set environment
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV JWT_SECRET=ccremote-jwt-secret-2026
-ENV DATABASE_PATH=/app/data/ccremote.db
+ENV JWT_SECRET=remotecli-jwt-secret-2026
+ENV DATABASE_PATH=/app/data/remotecli.db
 
 EXPOSE 3000
 

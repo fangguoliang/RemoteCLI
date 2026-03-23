@@ -1,5 +1,5 @@
 {
-  "name": "@ccremote/web",
+  "name": "@remotecli/web",
   "private": true,
   "version": "0.0.1",
   "type": "module",
@@ -10,7 +10,7 @@
     "typecheck": "vue-tsc -p tsconfig.app.json --noEmit"
   },
   "dependencies": {
-    "@ccremote/shared": "workspace:*",
+    "@remotecli/shared": "workspace:*",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/addon-web-links": "^0.11.0",

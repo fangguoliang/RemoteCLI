@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { FileEntry } from '@ccremote/shared';
+import type { FileEntry } from '@remotecli/shared';
 
 export interface TransferProgress {
   id: string;

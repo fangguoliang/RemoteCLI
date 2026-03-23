@@ -30,10 +30,10 @@ interface StoredSession {
   activeTabId: string | null;
 }
 
-const SESSION_KEY = 'ccremote-terminal-session';
-const HISTORY_KEY = 'ccremote-terminal-history';
-const CAPTURED_KEY = 'ccremote-captured-commands';
-const SHORTCUTS_KEY = 'ccremote-shortcuts';
+const SESSION_KEY = 'remotecli-terminal-session';
+const HISTORY_KEY = 'remotecli-terminal-history';
+const CAPTURED_KEY = 'remotecli-captured-commands';
+const SHORTCUTS_KEY = 'remotecli-shortcuts';
 const MAX_HISTORY = 10;
 const MAX_SHORTCUTS = 10;
 const MAX_CAPTURED_COMMANDS = 100;

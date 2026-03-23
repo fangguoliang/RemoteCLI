@@ -145,7 +145,7 @@ interface StoredSession {
   historyTabs: Tab[];
 }
 
-const SESSION_KEY = 'ccremote-terminal-session';
+const SESSION_KEY = 'remotecli-terminal-session';
 const MAX_HISTORY = 10;
 
 // Key sender function type
@@ -624,7 +624,7 @@ Expected: 所有包构建成功
 **Step 2: 部署到服务器**
 
 ```bash
-ssh root@123.57.34.57 'rm -rf /opt/ccremote/web/*' && scp -r packages/web/dist/* root@123.57.34.57:/opt/ccremote/web/
+ssh root@123.57.34.57 'rm -rf /opt/remotecli/web/*' && scp -r packages/web/dist/* root@123.57.34.57:/opt/remotecli/web/
 ```
 
 **Step 3: 提交最终更改**

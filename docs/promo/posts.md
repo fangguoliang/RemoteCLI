@@ -1,8 +1,8 @@
-# CCremote 社交媒体推广文案
+# remoteCli 社交媒体推广文案
 
 ## 微博版 (140字内)
 
-#开源推荐# CCremote - 手机远程控制Windows终端！
+#开源推荐# remoteCli - 手机远程控制Windows终端！
 
 📱浏览器直连，无需安装APP
 🔐JWT认证+用户管理，安全可靠
@@ -18,7 +18,7 @@ GitHub: github.com/fangguoliang/claude-code-remote
 
 ## 推特版 (英文)
 
-🚀 CCremote - Remote Windows Terminal from Your Phone!
+🚀 remoteCli - Remote Windows Terminal from Your Phone!
 
 📱 Browser-based, no app needed
 🔐 JWT auth + user management
@@ -38,7 +38,7 @@ GitHub: github.com/fangguoliang/claude-code-remote
 
 【标题】手机秒变远程终端！这个开源项目太香了🔥
 
-姐妹们！发现一个超棒的开源项目 CCremote 👇
+姐妹们！发现一个超棒的开源项目 remoteCli 👇
 
 ✨ 能做什么？
 用手机浏览器直接控制Windows电脑的PowerShell！
@@ -66,7 +66,7 @@ GitHub搜：claude-code-remote
 
 ## 知乎版标题
 
-**标题：** 手机远程控制Windows终端？CCremote让你的Claude Code任务随时随地执行
+**标题：** 手机远程控制Windows终端？remoteCli让你的Claude Code任务随时随地执行
 
 **摘要：** 无需公网IP，无需端口转发，反向隧道架构让Windows Agent主动连接云服务器。手机浏览器直连，支持多标签页、会话恢复、文件上传下载，是远程编程的超级助手。
 
@@ -74,11 +74,11 @@ GitHub搜：claude-code-remote
 
 ## 公众号版标题备选
 
-1. 手机秒变远程终端！CCremote开源项目详解
+1. 手机秒变远程终端！remoteCli开源项目详解
 2. 无需公网IP！这个远程终端方案太优雅了
-3. 远程执行Claude Code任务？CCremote完美解决
+3. 远程执行Claude Code任务？remoteCli完美解决
 4. 手机控制Windows PowerShell？这个开源项目做到了
-5. 程序员必备！CCremote让远程开发触手可及
+5. 程序员必备！remoteCli让远程开发触手可及
 
 ---
 
@@ -99,10 +99,10 @@ GitHub搜：claude-code-remote
 ### 图1：封面图
 - 手机屏幕显示终端界面
 - 背景：代码/科技感
-- 文字：CCremote - 手机远程终端
+- 文字：remoteCli - 手机远程终端
 
 ### 图2：功能对比
-| 传统方案 | CCremote |
+| 传统方案 | remoteCli |
 |---------|----------|
 | 需要SSH客户端 | 浏览器直连 |
 | 需要公网IP | 反向隧道 |

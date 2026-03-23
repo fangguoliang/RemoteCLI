@@ -43,8 +43,8 @@ interface Shortcut {
 | 快捷方式列表 | localStorage | 持久化，最多保留 10 个 |
 
 存储键名：
-- `ccremote-captured-commands` - 当前会话命令
-- `ccremote-shortcuts` - 快捷方式列表
+- `remotecli-captured-commands` - 当前会话命令
+- `remotecli-shortcuts` - 快捷方式列表
 
 ## UI 布局
 

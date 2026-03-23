@@ -3,7 +3,7 @@ import { ref, computed } from 'vue';
 
 // Session timeout in milliseconds (30 minutes)
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
-const LAST_ACTIVITY_KEY = 'ccremote-last-activity';
+const LAST_ACTIVITY_KEY = 'remotecli-last-activity';
 
 export const useAuthStore = defineStore('auth', () => {
   // 从 sessionStorage 读取初始值

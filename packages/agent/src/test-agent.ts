@@ -154,7 +154,7 @@ function processCommand(command: string, session: NonNullable<ReturnType<typeof 
         const file = cmdArgs[0].toLowerCase();
         if (file.includes('readme')) {
           output += 'This is a test file.\r\n';
-          output += 'CCremote Test Agent\r\n';
+          output += 'remoteCli Test Agent\r\n';
         } else if (file.includes('.ps1')) {
           output += 'Write-Host "Hello from PowerShell!"\r\n';
           output += 'Get-Date\r\n';

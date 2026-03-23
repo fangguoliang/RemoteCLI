@@ -35,8 +35,8 @@ export interface Shortcut {
   createdAt: number;
 }
 
-const CAPTURED_KEY = 'ccremote-captured-commands';
-const SHORTCUTS_KEY = 'ccremote-shortcuts';
+const CAPTURED_KEY = 'remotecli-captured-commands';
+const SHORTCUTS_KEY = 'remotecli-shortcuts';
 const MAX_SHORTCUTS = 10;
 
 // Captured commands storage (session-based)

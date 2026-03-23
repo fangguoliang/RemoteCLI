@@ -7,18 +7,18 @@
       "Bash(ssh:*)",
       "Bash(scp:*)",
       "Bash(powershell.exe -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, StartTime\" 2>&1)",
-      "Bash(powershell.exe -Command \"Get-ScheduledTaskInfo -TaskName 'CCremote-Agent' | Format-List\" 2>&1)",
-      "Bash(powershell.exe -Command \"\\(Get-ScheduledTask -TaskName 'CCremote-Agent'\\).Actions | Format-List\" 2>&1)",
-      "Bash(powershell -Command \"Get-ScheduledTask -TaskName 'CCremote-Agent*' | Get-ScheduledTaskInfo\")",
+      "Bash(powershell.exe -Command \"Get-ScheduledTaskInfo -TaskName 'RemoteCli-Agent' | Format-List\" 2>&1)",
+      "Bash(powershell.exe -Command \"\\(Get-ScheduledTask -TaskName 'RemoteCli-Agent'\\).Actions | Format-List\" 2>&1)",
+      "Bash(powershell -Command \"Get-ScheduledTask -TaskName 'RemoteCli-Agent*' | Get-ScheduledTaskInfo\")",
       "Bash(powershell -Command \"Get-Process -Name 'node' -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, StartTime | Format-Table -AutoSize\")",
       "Bash(powershell -Command \"Get-WmiObject Win32_Process -Filter \\\\\"Name='node.exe'\\\\\" | ForEach-Object { $_.ProcessId; $_.CommandLine } | Out-String\")",
-      "Bash(powershell -Command \"Start-ScheduledTask -TaskName 'CCremote-Agent'\")",
-      "Bash(powershell -Command \"Start-ScheduledTask -TaskName 'CCremote-Agent'\" && sleep 3 && ssh -o StrictHostKeyChecking=no root@123.57.34.57 \"pm2 logs ccremote-server --lines 30 --nostream\")",
-      "Bash(powershell -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force\" && sleep 2 && powershell -Command \"Start-ScheduledTask -TaskName 'CCremote-Agent'\" && sleep 3 && ssh -o StrictHostKeyChecking=no root@123.57.34.57 \"pm2 logs ccremote-server --lines 15 --nostream\")",
-      "Bash(powershell -Command \"Start-ScheduledTask -TaskName 'CCremote-Agent'\" && sleep 3 && ssh -o StrictHostKeyChecking=no root@123.57.34.57 \"timeout 20 pm2 logs ccremote-server --lines 0 --raw 2>&1\" || true)",
-      "Bash(powershell -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force\" && sleep 2 && powershell -Command \"Start-ScheduledTask -TaskName 'CCremote-Agent'\" && sleep 4 && ssh -o StrictHostKeyChecking=no root@123.57.34.57 \"timeout 15 pm2 logs ccremote-server --lines 0 --raw 2>&1\" || true)",
-      "Bash(powershell -Command \"Stop-ScheduledTask -TaskName 'CCremote-Agent' -ErrorAction SilentlyContinue; Start-ScheduledTask -TaskName 'CCremote-Agent'\")",
-      "Bash(powershell -Command \"Get-ScheduledTask -TaskName 'CCremote-Agent' | Get-ScheduledTaskInfo | Select-Object LastTaskResult, LastRunTime\")"
+      "Bash(powershell -Command \"Start-ScheduledTask -TaskName 'RemoteCli-Agent'\")",
+      "Bash(powershell -Command \"Start-ScheduledTask -TaskName 'RemoteCli-Agent'\" && sleep 3 && ssh -o StrictHostKeyChecking=no root@123.57.34.57 \"pm2 logs remotecli-server --lines 30 --nostream\")",
+      "Bash(powershell -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force\" && sleep 2 && powershell -Command \"Start-ScheduledTask -TaskName 'RemoteCli-Agent'\" && sleep 3 && ssh -o StrictHostKeyChecking=no root@123.57.34.57 \"pm2 logs remotecli-server --lines 15 --nostream\")",
+      "Bash(powershell -Command \"Start-ScheduledTask -TaskName 'RemoteCli-Agent'\" && sleep 3 && ssh -o StrictHostKeyChecking=no root@123.57.34.57 \"timeout 20 pm2 logs remotecli-server --lines 0 --raw 2>&1\" || true)",
+      "Bash(powershell -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force\" && sleep 2 && powershell -Command \"Start-ScheduledTask -TaskName 'RemoteCli-Agent'\" && sleep 4 && ssh -o StrictHostKeyChecking=no root@123.57.34.57 \"timeout 15 pm2 logs remotecli-server --lines 0 --raw 2>&1\" || true)",
+      "Bash(powershell -Command \"Stop-ScheduledTask -TaskName 'RemoteCli-Agent' -ErrorAction SilentlyContinue; Start-ScheduledTask -TaskName 'RemoteCli-Agent'\")",
+      "Bash(powershell -Command \"Get-ScheduledTask -TaskName 'RemoteCli-Agent' | Get-ScheduledTaskInfo | Select-Object LastTaskResult, LastRunTime\")"
     ]
   }
 }

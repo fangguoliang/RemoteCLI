@@ -1,5 +1,5 @@
 {
-  "name": "@ccremote/shared",
+  "name": "@remotecli/shared",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",

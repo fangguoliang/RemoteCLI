@@ -1,4 +1,4 @@
-import type { FileListPayload, FileProgressPayload, FileDataPayload, FileUploadedPayload, FileErrorPayload } from '@ccremote/shared';
+import type { FileListPayload, FileProgressPayload, FileDataPayload, FileUploadedPayload, FileErrorPayload } from '@remotecli/shared';
 import { useFileStore } from '@/stores/file';
 import { useAuthStore } from '@/stores/auth';
 

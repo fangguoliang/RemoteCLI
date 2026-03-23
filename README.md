@@ -1,4 +1,4 @@
-# CCremote
+# remoteCli
 
 远程 PowerShell 终端系统 - 通过手机浏览器访问 Windows PowerShell。
 
@@ -13,7 +13,7 @@
 ## 项目结构
 
 ```
-CCremote/
+remoteCli/
 ├── packages/
 │   ├── shared/      # 共享 TypeScript 类型定义
 │   ├── server/      # 云服务器端 (Node.js + Fastify + WebSocket)
@@ -60,7 +60,7 @@ pnpm dev
 |------|------|--------|
 | PORT | 服务端口 | 3000 |
 | JWT_SECRET | JWT 签名密钥 | dev-secret-key |
-| DATABASE_PATH | SQLite 数据库路径 | ./data/ccremote.db |
+| DATABASE_PATH | SQLite 数据库路径 | ./data/remotecli.db |
 | ADMIN_PASSWORD | admin 用户初始密码 | admin |
 
 > **重要**: 生产环境请务必修改 `JWT_SECRET` 和 `ADMIN_PASSWORD`！
@@ -185,7 +185,7 @@ cd packages/server && pnpm build
 4. 使用 PM2 管理进程:
 
 ```bash
-pm2 start dist/index.js --name ccremote-server
+pm2 start dist/index.js --name remotecli-server
 ```
 
 5. Nginx 反向代理配置:
@@ -214,10 +214,10 @@ server {
 5. 使用 NSSM 注册为 Windows 服务:
 
 ```powershell
-nssm install CCremoteAgent "C:\Program Files\nodejs\node.exe"
-nssm set CCremoteAgent AppParameters "C:\path\to\agent\dist\index.js"
-nssm set CCremoteAgent AppDirectory "C:\path\to\agent"
-nssm start CCremoteAgent
+nssm install RemoteCliAgent "C:\Program Files\nodejs\node.exe"
+nssm set RemoteCliAgent AppParameters "C:\path\to\agent\dist\index.js"
+nssm set RemoteCliAgent AppDirectory "C:\path\to\agent"
+nssm start RemoteCliAgent
 ```
 
 ## 功能特性

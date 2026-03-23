@@ -578,7 +578,7 @@ Replace entire file content with:
 <template>
   <div class="login-container">
     <div class="login-card">
-      <h1>CCremote</h1>
+      <h1>remoteCli</h1>
       <p>远程 PowerShell 终端</p>
 
       <!-- Login Form -->

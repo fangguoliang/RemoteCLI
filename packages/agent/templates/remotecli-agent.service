@@ -1,0 +1,19 @@
+[Unit]
+Description=remoteCli Agent - Remote Terminal Access
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%USER%
+WorkingDirectory=%INSTALL_DIR%
+ExecStart=%NODE_PATH% %INSTALL_DIR%/dist/index.js
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment=NODE_ENV=production
+EnvironmentFile=%INSTALL_DIR%/.env
+
+[Install]
+WantedBy=multi-user.target

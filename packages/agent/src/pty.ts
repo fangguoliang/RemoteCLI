@@ -1,4 +1,5 @@
 import * as pty from 'node-pty';
+import { getShell } from './shell.js';
 
 export interface PtySession {
   pty: pty.IPty;
@@ -15,11 +16,16 @@ export class PtyManager {
   private TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
   create(sessionId: string, cols: number = 80, rows: number = 24, onData: (data: string) => void): PtySession {
-    const ptyProcess = pty.spawn('powershell.exe', [], {
+    const { shell, args } = getShell();
+    const cwd = process.platform === 'win32'
+      ? (process.env.USERPROFILE || process.cwd())
+      : (process.env.HOME || process.cwd());
+
+    const ptyProcess = pty.spawn(shell, args, {
       name: 'xterm-256color',
       cols,
       rows,
-      cwd: process.env.USERPROFILE || process.cwd(),
+      cwd,
       env: process.env as { [key: string]: string },
     });
 

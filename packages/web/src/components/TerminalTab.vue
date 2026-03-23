@@ -31,6 +31,7 @@ let sessionId: string | null = null;
 let saveScrollbackTimer: number | null = null;
 let terminalInitialized = false; // Track if terminal has been initialized
 let shouldSendResize = true; // Control whether to send resize to server
+let userScrolledUp = false; // Track if user manually scrolled up from bottom
 
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
@@ -87,12 +88,15 @@ watch(() => props.visible, (visible, wasVisible) => {
       console.log(`[TerminalTab] After fit - ${props.tab.id}: cols=${terminal.cols}, rows=${terminal.rows}`);
 
       requestAnimationFrame(() => {
-        terminal?.scrollToBottom();
+        if (!terminal) return;
+        // Force scroll to bottom - use multiple methods to ensure it works
+        forceScrollToBottom();
 
         // Additional fit attempt after a short delay
         setTimeout(() => {
+          if (!terminal) return;
           safeFit();
-          terminal?.scrollToBottom();
+          forceScrollToBottom();
           tryFocus();
         }, 100);
       });
@@ -104,10 +108,63 @@ watch(() => props.visible, (visible, wasVisible) => {
 function tryFocus(attempts = 0) {
   if (!terminal) return;
   terminal.focus();
-  // Check if focus succeeded, retry if not
-  if (document.activeElement?.tagName !== 'TEXTAREA' && attempts < 3) {
+  // Check if focus succeeded - xterm uses a textarea internally
+  // The active element should be a textarea when terminal is focused
+  const activeTag = document.activeElement?.tagName;
+  const isTextarea = activeTag === 'TEXTAREA';
+  const isBody = activeTag === 'BODY';
+
+  // If focus didn't land on textarea (terminal's input), retry
+  // Also retry if focus landed on body (no element focused)
+  if ((!isTextarea || isBody) && attempts < 5) {
     setTimeout(() => tryFocus(attempts + 1), 50);
   }
+}
+
+// Force scroll to bottom using multiple methods for reliability
+function forceScrollToBottom() {
+  if (!terminal || !terminalRef.value) return;
+
+  // Reset user scroll flag since we're forcing to bottom
+  userScrolledUp = false;
+
+  // Method 1: Use xterm's scrollToBottom
+  terminal.scrollToBottom();
+
+  // Method 2: Directly manipulate the viewport element
+  const viewport = terminalRef.value.querySelector('.xterm-viewport') as HTMLElement;
+  if (viewport) {
+    // Force scroll to max
+    viewport.scrollTop = viewport.scrollHeight;
+  }
+
+  // Method 3: Use scrollLines to go to the end
+  const buffer = terminal.buffer.active;
+  const scrollToLine = buffer.length - terminal.rows;
+  if (scrollToLine > 0) {
+    terminal.scrollLines(scrollToLine - terminal.buffer.active.viewportY);
+  }
+}
+
+// Check if terminal is scrolled to bottom
+function isScrolledToBottom(): boolean {
+  if (!terminal) return true;
+  const buffer = terminal.buffer.active;
+  // Check if viewport is at the bottom
+  return buffer.viewportY >= buffer.length - terminal.rows - 1;
+}
+
+// Setup scroll tracking on the viewport
+function setupScrollTracking() {
+  if (!terminalRef.value) return;
+
+  const viewport = terminalRef.value.querySelector('.xterm-viewport') as HTMLElement;
+  if (!viewport) return;
+
+  viewport.addEventListener('scroll', () => {
+    // Track if user scrolled up from bottom
+    userScrolledUp = !isScrolledToBottom();
+  }, { passive: true });
 }
 
 // Safely fit terminal - only when tab is visible and container has valid size
@@ -151,6 +208,9 @@ function initTerminal() {
   terminal.loadAddon(new WebLinksAddon());
   terminal.loadAddon(serializeAddon);
   terminal.open(terminalRef.value);
+
+  // Setup scroll tracking to detect user scroll
+  setupScrollTracking();
 
   // Delay initial fit to ensure DOM is rendered
   setTimeout(() => {
@@ -217,7 +277,7 @@ function initTerminal() {
 
   // Register scroll to bottom function for this tab
   terminalStore.registerTabScroller(props.tab.id, () => {
-    terminal?.scrollToBottom();
+    forceScrollToBottom();
   });
 }
 
@@ -338,6 +398,13 @@ function handleWsMessage(msg: any) {
       break;
     case 'session:output':
       terminal?.write(msg.payload.data);
+      // Auto-scroll to bottom if user hasn't scrolled up
+      if (!userScrolledUp && terminal) {
+        // Use requestAnimationFrame to ensure DOM is updated
+        requestAnimationFrame(() => {
+          terminal?.scrollToBottom();
+        });
+      }
       break;
     case 'session:closed':
       status.value = 'disconnected';
@@ -427,10 +494,10 @@ function setupVisualViewportHandling() {
       // Delay to let the layout settle
       setTimeout(() => {
         // Double check visibility after timeout
-        if (!props.visible) return;
+        if (!props.visible || !terminal) return;
         safeFit();
         // Scroll cursor into view after resize
-        terminal?.scrollToBottom();
+        forceScrollToBottom();
       }, 100);
     }
   };

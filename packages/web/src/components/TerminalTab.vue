@@ -128,21 +128,19 @@ function forceScrollToBottom() {
   // Reset user scroll flag since we're forcing to bottom
   userScrolledUp = false;
 
-  // Method 1: Use xterm's scrollToBottom
+  // Method 1: Use xterm's scrollToBottom (most reliable)
   terminal.scrollToBottom();
 
   // Method 2: Directly manipulate the viewport element
+  // This ensures the viewport scrollTop is at maximum
   const viewport = terminalRef.value.querySelector('.xterm-viewport') as HTMLElement;
   if (viewport) {
-    // Force scroll to max
-    viewport.scrollTop = viewport.scrollHeight;
-  }
-
-  // Method 3: Use scrollLines to go to the end
-  const buffer = terminal.buffer.active;
-  const scrollToLine = buffer.length - terminal.rows;
-  if (scrollToLine > 0) {
-    terminal.scrollLines(scrollToLine - terminal.buffer.active.viewportY);
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
+    });
   }
 }
 
@@ -500,6 +498,7 @@ async function executeCommandsSequentially(commands: string[]) {
 
 // Setup visual viewport handling for mobile keyboard
 let viewportResizeHandler: (() => void) | null = null;
+let viewportResizeTimeout: number | null = null;
 
 function setupVisualViewportHandling() {
   if (!('visualViewport' in window)) return;
@@ -508,9 +507,15 @@ function setupVisualViewportHandling() {
     // Only fit if this tab is visible
     if (!props.visible) return;
 
+    // Debounce: clear any pending timeout to prevent multiple queued handlers
+    if (viewportResizeTimeout !== null) {
+      clearTimeout(viewportResizeTimeout);
+    }
+
     if (props.visible && terminal) {
-      // Delay to let the layout settle
-      setTimeout(() => {
+      // Delay to let the layout settle, with debounce to prevent race conditions
+      viewportResizeTimeout = window.setTimeout(() => {
+        viewportResizeTimeout = null;
         // Double check visibility after timeout
         if (!props.visible || !terminal) return;
         safeFit();
@@ -625,6 +630,12 @@ function cleanup() {
   if (saveScrollbackTimer) {
     clearInterval(saveScrollbackTimer);
     saveScrollbackTimer = null;
+  }
+
+  // Clear pending viewport resize timeout
+  if (viewportResizeTimeout !== null) {
+    clearTimeout(viewportResizeTimeout);
+    viewportResizeTimeout = null;
   }
 
   // Cleanup visual viewport listeners

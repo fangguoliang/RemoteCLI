@@ -137,22 +137,34 @@ export class Tunnel {
 
   private handleSessionStart(payload: { sessionId: string; cols: number; rows: number }) {
     const { sessionId, cols, rows } = payload;
+    console.log(`[Agent] handleSessionStart: sessionId=${sessionId}, cols=${cols}, rows=${rows}`);
 
-    this.ptyManager.create(sessionId, cols, rows, (data) => {
+    try {
+      this.ptyManager.create(sessionId, cols, rows, (data) => {
+        this.send({
+          type: 'session:output',
+          sessionId,
+          payload: { data },
+          timestamp: Date.now(),
+        });
+      });
+
+      console.log(`[Agent] PTY created successfully, sending session:started`);
       this.send({
-        type: 'session:output',
+        type: 'session:started',
         sessionId,
-        payload: { data },
+        payload: { success: true },
         timestamp: Date.now(),
       });
-    });
-
-    this.send({
-      type: 'session:started',
-      sessionId,
-      payload: { success: true },
-      timestamp: Date.now(),
-    });
+    } catch (err) {
+      console.error(`[Agent] Failed to create PTY:`, err);
+      this.send({
+        type: 'session:started',
+        sessionId,
+        payload: { success: false, error: String(err) },
+        timestamp: Date.now(),
+      });
+    }
   }
 
   private handleSessionResume(sessionId: string, payload: { cols: number; rows: number }) {

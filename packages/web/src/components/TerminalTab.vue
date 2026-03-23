@@ -339,6 +339,7 @@ function connectWebSocket() {
 function handleWsMessage(msg: any) {
   switch (msg.type) {
     case 'auth:result':
+      console.log('[TerminalTab] auth:result received:', msg.payload);
       if (msg.payload.success) {
         // Check if we have a sessionId to resume
         if (props.tab.sessionId) {
@@ -357,9 +358,15 @@ function handleWsMessage(msg: any) {
             timestamp: Date.now(),
           }));
         }
+      } else {
+        // Auth failed
+        console.error('[TerminalTab] auth failed:', msg.payload.error);
+        status.value = 'disconnected';
+        terminal?.write(`\r\n\x1b[31mAuth failed: ${msg.payload.error || 'Unknown error'}\x1b[0m\r\n`);
       }
       break;
     case 'session:created':
+      console.log('[TerminalTab] session:created received:', msg.payload);
       if (msg.payload.success) {
         sessionId = msg.payload.sessionId;
         // Update the tab with the sessionId for persistence
@@ -367,6 +374,11 @@ function handleWsMessage(msg: any) {
           terminalStore.updateTabSessionId(props.tab.id, sessionId);
         }
         // Don't execute commands here - wait for session:started
+      } else {
+        // Session creation failed - likely agent not connected
+        console.error('[TerminalTab] session:created failed:', msg.payload.error);
+        status.value = 'disconnected';
+        terminal?.write(`\r\n\x1b[31mError: ${msg.payload.error || 'Agent not connected'}\x1b[0m\r\n`);
       }
       break;
     case 'session:resumed':
@@ -388,12 +400,18 @@ function handleWsMessage(msg: any) {
       }
       break;
     case 'session:started':
-      console.log('[TerminalTab] session:started received, autoExecuteCommands:', props.autoExecuteCommands);
-      status.value = 'connected';
-      // Auto-execute commands after PTY is ready
-      if (props.autoExecuteCommands && props.autoExecuteCommands.length > 0) {
-        console.log('[TerminalTab] Starting command execution...');
-        executeCommandsSequentially(props.autoExecuteCommands);
+      console.log('[TerminalTab] session:started received, payload:', msg.payload);
+      if (msg.payload.success) {
+        status.value = 'connected';
+        // Auto-execute commands after PTY is ready
+        if (props.autoExecuteCommands && props.autoExecuteCommands.length > 0) {
+          console.log('[TerminalTab] Starting command execution...');
+          executeCommandsSequentially(props.autoExecuteCommands);
+        }
+      } else {
+        console.error('[TerminalTab] session:started failed:', msg.payload.error);
+        status.value = 'disconnected';
+        terminal?.write(`\r\n\x1b[31mSession start failed: ${msg.payload.error || 'Unknown error'}\x1b[0m\r\n`);
       }
       break;
     case 'session:output':

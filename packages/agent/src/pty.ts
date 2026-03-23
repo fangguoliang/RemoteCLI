@@ -21,6 +21,8 @@ export class PtyManager {
       ? (process.env.USERPROFILE || process.cwd())
       : (process.env.HOME || process.cwd());
 
+    console.log(`[PtyManager] Creating PTY: shell=${shell}, args=${JSON.stringify(args)}, cwd=${cwd}`);
+
     const ptyProcess = pty.spawn(shell, args, {
       name: 'xterm-256color',
       cols,

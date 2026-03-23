@@ -2,6 +2,7 @@ import WebSocket from 'ws';
 import { config } from './config.js';
 import { PtyManager } from './pty.js';
 import { FileManager } from './file.js';
+import { getAgentName } from './shell.js';
 
 export class Tunnel {
   private ws: WebSocket | null = null;
@@ -43,7 +44,7 @@ export class Tunnel {
       payload: {
         agentId: config.agentId,
         userId: config.userId,
-        name: 'Windows PowerShell',
+        name: getAgentName(),
       },
       timestamp: Date.now(),
     });

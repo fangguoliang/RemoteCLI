@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CCremote - 手机远程控制 Windows 终端</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      color: #fff;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    /* Header */
+    .header {
+      text-align: center;
+      margin-bottom: 50px;
+    }
+
+    .logo {
+      font-size: 48px;
+      font-weight: bold;
+      background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 10px;
+    }
+
+    .tagline {
+      font-size: 20px;
+      color: #a0a0a0;
+    }
+
+    /* Phone Mockup */
+    .phone-mockup {
+      width: 280px;
+      height: 560px;
+      background: #000;
+      border-radius: 40px;
+      margin: 0 auto 40px;
+      padding: 10px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      position: relative;
+    }
+
+    .phone-screen {
+      width: 100%;
+      height: 100%;
+      background: #1e1e1e;
+      border-radius: 30px;
+      overflow: hidden;
+    }
+
+    .terminal-header {
+      background: #2d2d2d;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .terminal-dot.red { background: #ff5f56; }
+    .terminal-dot.yellow { background: #ffbd2e; }
+    .terminal-dot.green { background: #27ca40; }
+
+    .terminal-title {
+      flex: 1;
+      text-align: center;
+      font-size: 12px;
+      color: #888;
+    }
+
+    .terminal-body {
+      padding: 10px;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      line-height: 1.4;
+      color: #0f0;
+    }
+
+    .terminal-body .prompt { color: #569cd6; }
+    .terminal-body .path { color: #dcdcaa; }
+    .terminal-body .command { color: #ce9178; }
+
+    .terminal-body .output {
+      color: #d4d4d4;
+      margin-top: 5px;
+    }
+
+    .quick-keys {
+      display: flex;
+      gap: 5px;
+      padding: 8px;
+      background: #252526;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .quick-key {
+      background: #3c3c3c;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 10px;
+      color: #fff;
+    }
+
+    /* Features Grid */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+
+    .feature {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 24px;
+      text-align: center;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .feature-icon {
+      font-size: 36px;
+      margin-bottom: 12px;
+    }
+
+    .feature-title {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .feature-desc {
+      font-size: 13px;
+      color: #a0a0a0;
+      line-height: 1.5;
+    }
+
+    /* Architecture */
+    .architecture {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 30px;
+      margin-bottom: 40px;
+      text-align: center;
+    }
+
+    .arch-title {
+      font-size: 18px;
+      margin-bottom: 20px;
+    }
+
+    .arch-flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .arch-node {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    .arch-arrow {
+      color: #00d4ff;
+      font-size: 20px;
+    }
+
+    /* CTA */
+    .cta {
+      text-align: center;
+      padding: 40px 20px;
+      background: linear-gradient(90deg, rgba(0, 212, 255, 0.2), rgba(123, 44, 191, 0.2));
+      border-radius: 16px;
+    }
+
+    .cta-title {
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+
+    .cta-button {
+      display: inline-block;
+      background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+      color: #fff;
+      text-decoration: none;
+      padding: 14px 32px;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 16px;
+      margin: 5px;
+    }
+
+    .cta-button:hover {
+      opacity: 0.9;
+    }
+
+    .github-link {
+      display: block;
+      margin-top: 16px;
+      color: #a0a0a0;
+      font-size: 14px;
+    }
+
+    /* Tech Stack */
+    .tech-stack {
+      text-align: center;
+      margin-top: 40px;
+      padding-top: 30px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .tech-title {
+      font-size: 14px;
+      color: #a0a0a0;
+      margin-bottom: 16px;
+    }
+
+    .tech-icons {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .tech-item {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+    }
+
+    /* Stats */
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 40px;
+      margin: 30px 0;
+    }
+
+    .stat {
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: bold;
+      background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: #a0a0a0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="logo">CCremote</div>
+      <div class="tagline">手机远程控制 Windows 终端</div>
+    </div>
+
+    <!-- Phone Mockup -->
+    <div class="phone-mockup">
+      <div class="phone-screen">
+        <div class="terminal-header">
+          <div class="terminal-dot red"></div>
+          <div class="terminal-dot yellow"></div>
+          <div class="terminal-dot green"></div>
+          <div class="terminal-title">PowerShell - windows-main</div>
+        </div>
+        <div class="terminal-body">
+          <div><span class="prompt">PS C:\Users\Admin</span>&gt; <span class="command">claude</span></div>
+          <div class="output">Claude Code v4.6.0</div>
+          <div class="output">Ready to assist...</div>
+          <div style="margin-top: 10px;"><span class="prompt">PS C:\Users\Admin</span>&gt; <span class="command">npm run build</span></div>
+          <div class="output">Building...</div>
+          <div class="output">✓ Compiled successfully!</div>
+          <div style="margin-top: 10px;"><span class="prompt">PS C:\Users\Admin</span>&gt; <span style="animation: blink 1s infinite;">_</span></div>
+        </div>
+        <div class="quick-keys">
+          <div class="quick-key">Tab</div>
+          <div class="quick-key">↑</div>
+          <div class="quick-key">↓</div>
+          <div class="quick-key">Esc</div>
+          <div class="quick-key">Ctrl+C</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value">0</div>
+        <div class="stat-label">公网IP需求</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">∞</div>
+        <div class="stat-label">会话保持</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">24/7</div>
+        <div class="stat-label">随时访问</div>
+      </div>
+    </div>
+
+    <!-- Features -->
+    <div class="features">
+      <div class="feature">
+        <div class="feature-icon">📱</div>
+        <div class="feature-title">手机原生体验</div>
+        <div class="feature-desc">浏览器直连，PWA支持，无需安装APP</div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔐</div>
+        <div class="feature-title">企业级安全</div>
+        <div class="feature-desc">JWT认证，用户管理，密码保护</div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">⚡</div>
+        <div class="feature-title">极致便捷</div>
+        <div class="feature-desc">多标签页，会话恢复，快捷键栏</div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">📁</div>
+        <div class="feature-title">文件管理</div>
+        <div class="feature-desc">上传下载，可视化浏览，操作直观</div>
+      </div>
+    </div>
+
+    <!-- Architecture -->
+    <div class="architecture">
+      <div class="arch-title">🚀 反向隧道架构</div>
+      <div class="arch-flow">
+        <div class="arch-node">📱 手机浏览器</div>
+        <div class="arch-arrow">⟷</div>
+        <div class="arch-node">☁️ Linux 云主机</div>
+        <div class="arch-arrow">⟷</div>
+        <div class="arch-node">💻 Windows Agent</div>
+      </div>
+      <div style="margin-top: 16px; font-size: 14px; color: #a0a0a0;">
+        Windows Agent 主动连接云服务器，无需公网 IP，无需端口转发！
+      </div>
+    </div>
+
+    <!-- CTA -->
+    <div class="cta">
+      <div class="cta-title">立即体验远程编程神器</div>
+      <a href="https://github.com/fangguoliang/claude-code-remote" class="cta-button">GitHub 开源</a>
+      <a href="http://123.57.34.57" class="cta-button">在线演示</a>
+      <div class="github-link">MIT License | 欢迎 Star ⭐</div>
+    </div>
+
+    <!-- Tech Stack -->
+    <div class="tech-stack">
+      <div class="tech-title">技术栈</div>
+      <div class="tech-icons">
+        <div class="tech-item">Vue 3</div>
+        <div class="tech-item">TypeScript</div>
+        <div class="tech-item">Fastify</div>
+        <div class="tech-item">WebSocket</div>
+        <div class="tech-item">node-pty</div>
+        <div class="tech-item">xterm.js</div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+  </style>
+</body>
+</html>

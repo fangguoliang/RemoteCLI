@@ -116,6 +116,11 @@ export const userModel = {
     );
     saveDatabase();
   },
+
+  delete: (username: string) => {
+    runStatement('DELETE FROM users WHERE username = ?', [username]);
+    saveDatabase();
+  },
 };
 
 // Agent 相关操作

@@ -74,4 +74,58 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
     return { success: true };
   });
+
+  // Disable user (set random password)
+  fastify.post('/api/admin/disable-user', {
+    preHandler: adminOnly
+  }, async (request, reply) => {
+    const { username } = request.body as { username: string };
+
+    if (!username) {
+      return reply.status(400).send({ error: '用户名必填' });
+    }
+
+    const user = userModel.findByUsername(username);
+    if (!user) {
+      return reply.status(400).send({ error: '用户不存在' });
+    }
+
+    // Cannot disable admin
+    if (username === 'admin') {
+      return reply.status(400).send({ error: '不能禁用管理员账户' });
+    }
+
+    // Set random password to disable
+    const SALT_ROUNDS = 10;
+    const randomPassword = bcrypt.genSaltSync(10).replace(/\//g, '').slice(0, 32);
+    const passwordHash = await bcrypt.hash(randomPassword, SALT_ROUNDS);
+    userModel.updatePassword(username, passwordHash);
+
+    return { success: true };
+  });
+
+  // Delete user
+  fastify.post('/api/admin/delete-user', {
+    preHandler: adminOnly
+  }, async (request, reply) => {
+    const { username } = request.body as { username: string };
+
+    if (!username) {
+      return reply.status(400).send({ error: '用户名必填' });
+    }
+
+    const user = userModel.findByUsername(username);
+    if (!user) {
+      return reply.status(400).send({ error: '用户不存在' });
+    }
+
+    // Cannot delete admin
+    if (username === 'admin') {
+      return reply.status(400).send({ error: '不能删除管理员账户' });
+    }
+
+    userModel.delete(username);
+
+    return { success: true };
+  });
 }

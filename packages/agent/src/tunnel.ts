@@ -43,7 +43,7 @@ export class Tunnel {
       type: 'register',
       payload: {
         agentId: config.agentId,
-        userId: config.userId,
+        username: config.username,
         name: getAgentName(),
       },
       timestamp: Date.now(),

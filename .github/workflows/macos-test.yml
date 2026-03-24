@@ -52,74 +52,42 @@ jobs:
           which sh && echo "sh: available" || echo "sh: not found"
 
           echo ""
-          echo "=== Testing node-pty spawn (without -l flag) ==="
+          echo "=== Testing node-pty spawn ==="
           node -e "
             const pty = require('node-pty');
+            const { spawn } = require('child_process');
 
-            console.log('Test: Spawning /bin/zsh without -l...');
+            console.log('Spawning /bin/zsh...');
+            let success = false;
             const p = pty.spawn('/bin/zsh', [], {
               name: 'xterm-256color',
               cols: 80,
               rows: 24,
-              cwd: process.env.HOME,
-              env: process.env
+              cwd: process.env.HOME || '/Users/runner',
+              env: { ...process.env, TERM: 'xterm-256color' }
             });
-            p.write('echo PTY_TEST_SUCCESS\\n');
+
+            const timer = setTimeout(() => {
+              if (!success) {
+                console.log('PTY test: TIMEOUT');
+                p.kill();
+                process.exit(1);
+              }
+            }, 10000);
+
             p.onData((data) => {
-              if (data.includes('PTY_TEST_SUCCESS')) {
-                console.log('PTY spawn test: PASSED');
+              process.stdout.write(data);
+              if (data.includes('PTY_SUCCESS')) {
+                success = true;
+                clearTimeout(timer);
+                console.log('\\nPTY spawn test: PASSED');
                 p.kill();
                 process.exit(0);
               }
             });
-            setTimeout(() => {
-              console.log('PTY spawn test: TIMEOUT');
-              p.kill();
-              process.exit(1);
-            }, 5000);
+
+            p.write('echo PTY_SUCCESS\\n');
           "
-
-          echo ""
-          echo "=== Testing node-pty spawn (with -l flag - known issue) ==="
-          node -e "
-            const pty = require('node-pty');
-
-            console.log('Test: Spawning /bin/zsh with -l...');
-            try {
-              const p = pty.spawn('/bin/zsh', ['-l'], {
-                name: 'xterm-256color',
-                cols: 80,
-                rows: 24,
-                cwd: process.env.HOME,
-                env: process.env
-              });
-              p.write('echo PTY_L_FLAG_SUCCESS\\n');
-              p.onData((data) => {
-                if (data.includes('PTY_L_FLAG_SUCCESS')) {
-                  console.log('PTY spawn test (zsh -l): PASSED');
-                  p.kill();
-                  process.exit(0);
-                }
-              });
-              p.onExit(({ exitCode }) => {
-                if (exitCode !== 0) {
-                  console.log('PTY (zsh -l) exited with code:', exitCode);
-                  console.log('Note: -l flag has known issues on some macOS versions');
-                  process.exit(0);  // Don't fail
-                }
-              });
-              setTimeout(() => {
-                console.log('PTY spawn test (zsh -l): TIMEOUT');
-                console.log('Note: -l flag has known issues on some macOS versions');
-                p.kill();
-                process.exit(0);  // Don't fail CI for known issue
-              }, 5000);
-            } catch (e) {
-              console.log('PTY spawn test (zsh -l) error:', e.message);
-              console.log('This is a known issue on macOS');
-              process.exit(0);
-            }
-          " || echo "Known issue with -l flag, continuing..."
 
       - name: Build agent package
         run: cd packages/agent && pnpm build

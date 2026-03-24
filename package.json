@@ -2,6 +2,10 @@
   "name": "remotecli",
   "version": "0.1.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fangguoliang/RemoteCLI.git"
+  },
   "scripts": {
     "dev": "pnpm -r run dev",
     "build": "pnpm -r run build",

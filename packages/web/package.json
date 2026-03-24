@@ -3,6 +3,11 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fangguoliang/RemoteCLI.git",
+    "directory": "packages/web"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -p tsconfig.app.json && vite build",

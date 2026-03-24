@@ -46,6 +46,7 @@ export interface AuthResultPayload {
 // Agent 注册
 export interface RegisterPayload {
   agentId: string;
+  username?: string;
   secret: string;
   name?: string;
 }

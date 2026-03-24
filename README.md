@@ -1,27 +1,99 @@
-# remoteCli
+# RemoteCLI
 
-远程 PowerShell 终端系统 - 通过手机浏览器访问 Windows PowerShell。
+<div align="center">
+
+**让终端触手可及 - 手机上的 PowerShell 自由之旅**
+
+[![GitHub stars](https://img.shields.io/github/stars/fangguoliang/RemoteCLI?style=social)](https://github.com/fangguoliang/RemoteCLI)
+[![GitHub forks](https://img.shields.io/github/forks/fangguoliang/RemoteCLI?style=social)](https://github.com/fangguoliang/RemoteCLI/fork)
+[![GitHub license](https://img.shields.io/github/license/fangguoliang/RemoteCLI)](https://github.com/fangguoliang/RemoteCLI)
+
+[English](#) | 简体中文
+
+</div>
+
+---
+
+## 为什么选择 RemoteCLI？
+
+你是否经历过这些时刻？
+
+**约会中的紧急修复** - 周五晚上，你正和心仪的人共进晚餐。突然，线上服务挂了。如果有一种方式，能在手机上直接 SSH 进服务器排查问题，是不是就能优雅地处理完危机，继续享受美食？
+
+**通勤路上的灵感时刻** - 早高峰的地铁上，你突然想到昨晚代码中的一个 bug。你想立刻验证修复方案，但地铁里打开笔记本电脑简直是奢望。如果手机能秒连终端，那些碎片时间就能变成 productive time。
+
+**躺在床上写代码** - 凌晨两点，你刚躺下准备睡觉，脑子里突然冒出一个绝妙的实现思路。打开电脑？太麻烦了。如果手机就能连接到你的开发环境，躺着就能把灵感变成代码。
+
+**外出时的服务器维护** - 你在咖啡馆、在公园、在机场。服务器需要重启一个服务，或者需要查看一下日志。以前你必须带着笔记本电脑，现在呢？
+
+**RemoteCLI 为自由而生。**
+
+---
+
+## 核心特性
+
+### 多终端同时管理
+支持同时连接多个 Agent，一键切换。你可以管理家里的 NAS、公司服务器、云主机，所有终端集中在一个界面，无需多个 App。
+
+### 跨平台会话集中管理
+无论你使用 iOS Safari、Android Chrome、Windows/Mac/Linux 浏览器，都能获得一致的终端体验。一个账号，随处访问。
+
+### 多用户多 Agent 管理
+- 支持多用户独立账号
+- 每个 Agent 可绑定特定用户
+- 权限管理：控制谁能访问哪些 Agent
+- Agent 自动注册：新机器一键接入
+
+### 会话自动恢复
+当你关闭浏览器，或手机锁屏，或网络断开 —— 终端会话不会丢失。30 分钟内重新连接，一切如初：
+- 当前目录不变
+- 命令历史保留
+- 正在运行的程序也会继续执行
+
+### 会话快捷方式
+常用连接一键直达。你可以在主屏幕添加快捷方式，点击即刻进入指定终端。
+
+### 文件上传下载
+需要在服务器上传个脚本？或者下载日志文件分析？直接拖拽，简单直观。
+
+### 用户权限管理
+- 管理员可以管理所有用户
+- 控制用户对 Agent 的访问权限
+- 安全隔离，各司其职
+
+### 快捷键加持
+手机上也能用快捷键：`Ctrl+C` 中断命令、`Ctrl+D` 退出会话、支持自定义快捷键映射，外接键盘体验更佳。
+
+---
+
+## 为什么选择 RemoteCLI？
+
+### 零配置穿透
+传统远程访问需要公网 IP、端口转发、DDNS 服务或 VPN。RemoteCLI 采用 **反向隧道架构**：Agent 主动连接服务器，无需任何网络配置。即使你的电脑在 NAT 后面、在公司内网、在咖啡厅 WiFi 下，都能被访问。
+
+### PWA 支持
+添加到主屏幕，就像原生 App：全屏体验、离线缓存、推送通知（规划中）。
+
+### 安全可靠
+- JWT 身份认证
+- WebSocket 加密传输
+- 敏感信息加密存储
+- 会话超时自动断开
+
+---
 
 ## 架构
 
 ```
-手机浏览器 <--WebSocket--> Linux 云主机 <--WebSocket--> Windows Agent
+┌─────────────┐     ┌─────────────────┐     ┌─────────────┐
+│ 手机浏览器   │◄───►│ 云服务器        │◄───►│ Windows Agent│
+│ (任意设备)   │  WS │ (中转节点)      │  WS │ (你的电脑)   │
+└─────────────┘     └─────────────────┘     └─────────────┘
 ```
 
 **反向隧道架构**: Windows Agent 主动连接云服务器，无需公网 IP 或端口转发。
 
-## 项目结构
-
-```
-remoteCli/
-├── packages/
-│   ├── shared/      # 共享 TypeScript 类型定义
-│   ├── server/      # 云服务器端 (Node.js + Fastify + WebSocket)
-│   ├── agent/       # Windows Agent (Node.js + node-pty + WebSocket)
-│   └── web/         # 手机前端 (Vue 3 + xterm.js + PWA)
-├── package.json
-└── pnpm-workspace.yaml
-```
+---
 
 ## 快速开始
 
@@ -34,6 +106,9 @@ remoteCli/
 ### 1. 安装依赖
 
 ```bash
+git clone https://github.com/fangguoliang/RemoteCLI.git
+cd RemoteCLI
+
 pnpm install
 
 # 如果 node-pty 编译失败，运行：
@@ -131,6 +206,23 @@ pnpm dev
 3. 注册新用户
 4. 登录后点击 Agent 开始终端会话
 
+---
+
+## 项目结构
+
+```
+RemoteCLI/
+├── packages/
+│   ├── shared/      # 共享 TypeScript 类型定义
+│   ├── server/      # 云服务器端 (Node.js + Fastify + WebSocket)
+│   ├── agent/       # Windows Agent (Node.js + node-pty + WebSocket)
+│   └── web/         # 手机前端 (Vue 3 + xterm.js + PWA)
+├── package.json
+└── pnpm-workspace.yaml
+```
+
+---
+
 ## API 接口
 
 ### 认证
@@ -168,6 +260,8 @@ pnpm dev
 |------|------|------|
 | GET | /api/health | 服务健康状态 |
 
+---
+
 ## WebSocket 协议
 
 ### 消息格式
@@ -199,24 +293,7 @@ interface Message {
 | session:close | Both | 关闭会话 |
 | ping/pong | Both | 心跳 |
 
-## 开发
-
-### 运行测试
-
-```bash
-cd packages/server
-pnpm test
-```
-
-### 构建
-
-```bash
-# 构建所有包
-pnpm build
-
-# 构建单个包
-cd packages/server && pnpm build
-```
+---
 
 ## 部署
 
@@ -263,18 +340,28 @@ nssm set RemoteCliAgent AppDirectory "C:\path\to\agent"
 nssm start RemoteCliAgent
 ```
 
-## 功能特性
+---
 
-- 多标签页终端
-- Tab 补全、方向键历史
-- PWA 支持安装到手机桌面
-- 自动登录 (刷新令牌)
-- 主题和字体配置
-- 快捷键栏 (Esc, Tab, 方向键, Ctrl+C, Ctrl+L)
-- 自动重连
-- 用户管理 (admin 可创建/禁用/删除用户)
-- 修改密码功能
-- **Agent 权限管理** (admin 可授权用户访问指定 Agent)
+## 开发
+
+### 运行测试
+
+```bash
+cd packages/server
+pnpm test
+```
+
+### 构建
+
+```bash
+# 构建所有包
+pnpm build
+
+# 构建单个包
+cd packages/server && pnpm build
+```
+
+---
 
 ## 技术栈
 
@@ -284,6 +371,28 @@ nssm start RemoteCliAgent
 | 服务端 | Node.js, Fastify, ws, sql.js, bcrypt |
 | Agent | Node.js, node-pty, ws |
 
+---
+
+## 适用人群
+
+- **程序员**：随时随地写代码、查日志、修 bug
+- **运维工程师**：7x24 服务器监控和故障处理
+- **学生**：在宿舍、图书馆、教室都能访问实验室服务器
+- **自由职业者**：真正的数字游民，咖啡店就是办公室
+- **技术爱好者**：管理家里的 NAS、智能家居、自建服务
+
+---
+
 ## 许可证
 
 MIT
+
+---
+
+<div align="center">
+
+**让终端，无处不在。**
+
+如果这个项目对你有帮助，请给一个 ⭐ Star 支持一下！
+
+</div>

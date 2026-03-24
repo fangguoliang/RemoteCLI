@@ -464,9 +464,11 @@ watch(onlineAgents, (newOnlineAgents) => {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  max-height: 100vh;
   background: #1a1a2e;
   color: #fff;
   position: relative;
+  overflow: hidden;
 }
 
 .agent-bar {
@@ -476,10 +478,14 @@ watch(onlineAgents, (newOnlineAgents) => {
   padding: 0.5rem;
   background: #16162a;
   border-bottom: 1px solid #333;
+  gap: 0.5rem;
+  overflow: hidden;
 }
 
 .agents-dropdown {
   position: relative;
+  max-width: 180px;
+  flex-shrink: 0;
 }
 
 .dropdown-btn {
@@ -494,6 +500,14 @@ watch(onlineAgents, (newOnlineAgents) => {
   font-size: 0.85rem;
   cursor: pointer;
   white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dropdown-btn > span:not(.status-dot):not(.arrow) {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dropdown-btn:hover {
@@ -574,6 +588,8 @@ watch(onlineAgents, (newOnlineAgents) => {
   font-size: 0.85rem;
   text-decoration: none;
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .nav-btn:hover {
@@ -678,6 +694,12 @@ watch(onlineAgents, (newOnlineAgents) => {
 /* Shortcuts dropdown */
 .shortcuts-dropdown {
   position: relative;
+  max-width: 150px;
+  flex-shrink: 0;
+}
+
+.shortcuts-dropdown .dropdown-btn {
+  max-width: 150px;
 }
 
 .shortcuts-dropdown .dropdown-btn:disabled {

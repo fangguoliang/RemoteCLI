@@ -6,20 +6,33 @@ import type { FileEntry } from '@remotecli/shared';
 export class FileManager {
   private chunkSize = 1024 * 1024; // 1MB
 
-  // 展开路径（处理 ~ 等）
+  // 展开路径（处理 ~ 等）并规范化路径分隔符
   private expandPath(dirPath: string): string {
-    if (dirPath === '~' || dirPath.startsWith('~/')) {
+    let result = dirPath;
+
+    // 处理 ~ 路径
+    if (result === '~' || result.startsWith('~/') || result.startsWith('~\\')) {
       const home = os.homedir();
-      if (dirPath === '~') {
+      if (result === '~') {
         return home;
       }
-      return path.join(home, dirPath.slice(2));
+      return path.join(home, result.slice(2));
     }
-    // Handle Windows drive letters (e.g., "D:" -> "D:\\")
-    if (/^[A-Za-z]:$/.test(dirPath)) {
-      return dirPath + '\\';
+
+    // 在 Unix 系统上，规范化路径分隔符（将 Windows 反斜杠转换为正斜杠）
+    if (process.platform !== 'win32') {
+      // 将反斜杠替换为正斜杠
+      result = result.replace(/\\/g, '/');
+    } else {
+      // 在 Windows 上，将正斜杠替换为反斜杠
+      result = result.replace(/\//g, '\\');
+      // Handle Windows drive letters (e.g., "D:" -> "D:\\")
+      if (/^[A-Za-z]:$/.test(result)) {
+        return result + '\\';
+      }
     }
-    return dirPath;
+
+    return result;
   }
 
   async browse(dirPath: string): Promise<{ path: string; entries: FileEntry[] }> {
@@ -73,7 +86,8 @@ export class FileManager {
     onChunk: (data: { chunkIndex: number; totalChunks: number; totalSize: number; content: string }) => void
   ): Promise<void> {
     try {
-      const stat = await fs.stat(filePath);
+      const expandedPath = this.expandPath(filePath);
+      const stat = await fs.stat(expandedPath);
 
       if (stat.isDirectory()) {
         throw new Error('IS_DIRECTORY');
@@ -82,7 +96,7 @@ export class FileManager {
       const totalSize = stat.size;
       const totalChunks = Math.ceil(totalSize / this.chunkSize);
 
-      const handle = await fs.open(filePath, 'r');
+      const handle = await fs.open(expandedPath, 'r');
 
       try {
         for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
@@ -145,13 +159,15 @@ export class FileManager {
       throw new Error('UPLOAD_NOT_FOUND');
     }
 
+    const expandedPath = this.expandPath(filePath);
+
     try {
       // 确保目录存在
-      const dir = path.dirname(filePath);
+      const dir = path.dirname(expandedPath);
       await fs.mkdir(dir, { recursive: true });
 
       // 合并所有块并写入文件
-      const handle = await fs.open(filePath, 'w');
+      const handle = await fs.open(expandedPath, 'w');
 
       try {
         for (let i = 0; i < upload.totalChunks; i++) {

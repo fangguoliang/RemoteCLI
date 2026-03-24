@@ -5,8 +5,8 @@
       <div class="agents-dropdown">
         <button class="dropdown-btn" @click="showAgents = !showAgents">
           <span class="status-dot" :class="{ online: selectedAgentOnline }"></span>
-          {{ selectedAgentName }}
-          <span class="arrow" :class="{ open: showAgents }">v</span>
+          <span class="btn-text">{{ selectedAgentName }}</span>
+          <span class="arrow" :class="{ open: showAgents }">▼</span>
         </button>
         <div class="dropdown-menu" v-show="showAgents">
           <div v-if="loadingAgents" class="menu-item loading">Loading...</div>
@@ -30,8 +30,8 @@
       <!-- Shortcuts Dropdown -->
       <div class="shortcuts-dropdown">
         <button class="dropdown-btn" @click="showShortcuts = !showShortcuts" :disabled="fileShortcuts.length === 0">
-          快捷方式 ({{ fileShortcuts.length }})
-          <span class="arrow" :class="{ open: showShortcuts }">v</span>
+          <span class="btn-text">快捷方式 ({{ fileShortcuts.length }})</span>
+          <span class="arrow" :class="{ open: showShortcuts }">▼</span>
         </button>
         <div class="dropdown-menu" v-show="showShortcuts">
           <div v-if="fileShortcuts.length === 0" class="menu-item no-shortcuts">
@@ -479,7 +479,6 @@ watch(onlineAgents, (newOnlineAgents) => {
   background: #16162a;
   border-bottom: 1px solid #333;
   gap: 0.5rem;
-  overflow: hidden;
 }
 
 .agents-dropdown {
@@ -491,21 +490,19 @@ watch(onlineAgents, (newOnlineAgents) => {
 .dropdown-btn {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  gap: 0.35rem;
+  padding: 0.45rem 0.6rem;
   background: #1a1a2e;
   border: none;
   border-radius: 4px;
   color: #e0e0e0;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   cursor: pointer;
   white-space: nowrap;
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
-.dropdown-btn > span:not(.status-dot):not(.arrow) {
+.dropdown-btn .btn-text {
   overflow: hidden;
   text-overflow: ellipsis;
 }

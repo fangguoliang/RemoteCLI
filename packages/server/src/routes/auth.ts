@@ -1,7 +1,7 @@
 // packages/server/src/routes/auth.ts
 import { FastifyInstance } from 'fastify';
 import { authService } from '../services/auth.js';
-import { userModel, refreshTokenModel, agentModel } from '../db/index.js';
+import { userModel, refreshTokenModel, agentModel, agentPermissionModel } from '../db/index.js';
 import { tunnelManager } from '../ws/tunnel.js';
 
 export async function authRoutes(fastify: FastifyInstance) {
@@ -137,16 +137,38 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
   }, async (request, reply) => {
     const payload = request.user as { userId: number; username: string };
-    const agents = agentModel.findByUserId(payload.userId);
 
-    // 添加在线状态
-    const agentsWithStatus = agents.map(agent => ({
-      agentId: agent.agent_id,
-      name: agent.name,
-      online: tunnelManager.isAgentOnline(agent.agent_id),
-      lastSeen: agent.last_seen,
-    }));
+    // 获取用户拥有的 Agent
+    const ownedAgents = agentModel.findByUserId(payload.userId);
 
-    return { agents: agentsWithStatus };
+    // 获取用户被授权的 Agent
+    const sharedAgents = agentPermissionModel.findByUserId(payload.userId);
+
+    // 合并去重
+    const agentMap = new Map<string, { agentId: string; name: string | null; online: boolean; lastSeen: number | null; isOwner: boolean }>();
+
+    for (const agent of ownedAgents) {
+      agentMap.set(agent.agent_id, {
+        agentId: agent.agent_id,
+        name: agent.name,
+        online: tunnelManager.isAgentOnline(agent.agent_id),
+        lastSeen: agent.last_seen,
+        isOwner: true,
+      });
+    }
+
+    for (const agent of sharedAgents) {
+      if (!agentMap.has(agent.agent_id)) {
+        agentMap.set(agent.agent_id, {
+          agentId: agent.agent_id,
+          name: agent.name,
+          online: tunnelManager.isAgentOnline(agent.agent_id),
+          lastSeen: null,
+          isOwner: false,
+        });
+      }
+    }
+
+    return { agents: Array.from(agentMap.values()) };
   });
 }

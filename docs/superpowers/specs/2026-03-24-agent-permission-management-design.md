@@ -20,10 +20,10 @@
 
 | 维度 | 决策 |
 |------|------|
-| Agent 所有权 | 每个 Agent 有唯一所有者，安装时通过 USER_ID 绑定，默认 admin |
+| Agent 所有权 | 每个 Agent 有唯一所有者，安装时通过 USERNAME 绑定，默认 admin |
 | 权限粒度 | 简单开关（能/不能访问） |
 | 多用户共享 | 平等共享，所有授权用户权限相同 |
-| 管理界面 | 用户×Agent 笛卡尔积批量操作，可选操作类型，显示当前权限清单 |
+| 管理界面 | 在 admin 设置页面增加 Agent 授权模块，支持按 Agent/用户双向查看权限 |
 | 用户端显示 | 简洁视图，只显示有权限的 Agent |
 
 ## 实现方案
@@ -78,7 +78,9 @@ export const agentPermissionModel = {
 
 | 接口 | 方法 | 功能 |
 |------|------|------|
-| `/api/admin/agents` | GET | 获取所有 Agent 列表（含所有者、共享用户清单） |
+| `/api/admin/agents` | GET | 获取所有 Agent 列表 |
+| `/api/admin/agents/:agentId/permissions` | GET | 查看单个 Agent 的权限详情 |
+| `/api/admin/users/:userId/permissions` | GET | 查看单个用户的权限详情 |
 | `/api/admin/agent-permissions` | POST | 批量授权（笛卡尔积） |
 | `/api/admin/agent-permissions` | DELETE | 批量移除权限 |
 | `/api/admin/agent-permissions/transfer-owner` | POST | 转移所有者 |
@@ -107,23 +109,28 @@ export const agentPermissionModel = {
 }
 ```
 
-**Agent 列表响应示例**：
+**查看 Agent 权限响应** (`GET /api/admin/agents/:agentId/permissions`)：
 ```json
 {
-  "agents": [
-    {
-      "agentId": "agent-a",
-      "name": "Office-PC",
-      "online": true,
-      "ownerId": 1,
-      "ownerName": "admin",
-      "sharedUsers": [
-        { "id": 2, "username": "user1" },
-        { "id": 3, "username": "user2" }
-      ],
-      "lastSeen": 1711234567890,
-      "createdAt": 1711000000000
-    }
+  "agentId": "agent-a",
+  "name": "Office-PC",
+  "owner": { "id": 1, "username": "admin" },
+  "sharedUsers": [
+    { "id": 2, "username": "user1" },
+    { "id": 3, "username": "user2" }
+  ]
+}
+```
+
+**查看用户权限响应** (`GET /api/admin/users/:userId/permissions`)：
+```json
+{
+  "user": { "id": 2, "username": "user1" },
+  "ownedAgents": [
+    { "agentId": "agent-b", "name": "Home-PC" }
+  ],
+  "sharedAgents": [
+    { "agentId": "agent-a", "name": "Office-PC" }
   ]
 }
 ```
@@ -132,14 +139,89 @@ export const agentPermissionModel = {
 
 **配置修改** (`packages/agent/src/config.ts`)：
 ```typescript
-userId: parseInt(process.env.USER_ID || '1', 10),  // 默认绑定到 admin
+username: process.env.USERNAME || 'admin',  // 默认绑定到 admin
+```
+
+**Server 注册处理** (`packages/server/src/ws/router.ts`)：
+```typescript
+// 接收 username 而非 userId
+const { agentId, username, name } = payload;
+// 查找用户
+const user = userModel.findByUsername(username || 'admin');
+if (!user) {
+  // 用户不存在，拒绝注册
+  return { success: false, error: 'User not found' };
+}
+// 绑定到用户
+agentModel.create(agentId, name, user.id);
 ```
 
 **行为**：
-- 如果 `.env` 中配置了 `USER_ID=123`，Agent 归属该用户
-- 如果没有配置或为空，Agent 自动归属 admin (userId=1)
+- 如果 `.env` 中配置了 `USERNAME=zhangsan`，Agent 归属该用户
+- 如果没有配置或为空，Agent 自动归属 admin
+- 普通用户只需知道自己的用户名，无需查询用户ID
 
-### 用户 Agent 查询逻辑
+### 管理界面交互设计
+
+在 admin 设置页面中新增 **Agent 授权模块**，布局如下：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Agent 授权管理                                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────────┐    ┌─────────────────┐                │
+│  │ Agent 下拉选择  │    │ 用户下拉选择    │                │
+│  │ [Office-PC  ▼] │    │ [user1     ▼]  │                │
+│  └─────────────────┘    └─────────────────┘                │
+│  [查看 Agent 权限]      [查看用户权限]                      │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │ 权限详情（多行文本框，只读）                              ││
+│  │                                                          ││
+│  │ [选择 Agent 时显示]                                      ││
+│  │ Agent: Office-PC                                         ││
+│  │ 所有者: admin                                            ││
+│  │ 可使用用户: admin, user1, user2                          ││
+│  │                                                          ││
+│  │ [选择用户时显示]                                         ││
+│  │ 用户: user1                                              ││
+│  │ 拥有的 Agent: 无                                         ││
+│  │ 可使用的 Agent: Office-PC, Home-PC                       ││
+│  └─────────────────────────────────────────────────────────┘│
+│                                                             │
+│  ┌─────────────────┐    ┌─────────────────┐                │
+│  │ 用户多选下拉    │    │ Agent 多选下拉  │                │
+│  │ [user1 ✓]      │    │ [Office-PC ✓]  │                │
+│  │ [user2 ✓]      │    │ [Home-PC ✓]    │                │
+│  │ [user3  ]      │    │ [Lab-PC   ]    │                │
+│  └─────────────────┘    └─────────────────┘                │
+│  [授权选中] [移除选中] [转移所有者]                          │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**交互流程**：
+
+1. **查看 Agent 权限**：
+   - 选择一个 Agent，点击"查看 Agent 权限"
+   - 下方文本框显示：所有者 + 可使用用户列表
+
+2. **查看用户权限**：
+   - 选择一个用户，点击"查看用户权限"
+   - 下方文本框显示：拥有的 Agent + 可使用的 Agent
+
+3. **批量授权**：
+   - 多选用户 + 多选 Agent
+   - 点击"授权选中"，建立笛卡尔积权限
+
+4. **批量移除**：
+   - 多选用户 + 多选 Agent
+   - 点击"移除选中"，删除权限
+
+5. **转移所有者**：
+   - 选择单个 Agent + 单个用户
+   - 点击"转移所有者"，更改 Agent 所有者
 
 修改 `/api/agents` 接口，返回用户有权限访问的所有 Agent：
 
@@ -163,21 +245,29 @@ const allAgents = mergeAndDedupe(ownedAgents, sharedAgents);
 ### 后端 (packages/server)
 - `src/db/schema.sql` - 新增 agent_permissions 表
 - `src/db/index.ts` - 新增 agentPermissionModel
-- `src/routes/admin.ts` - 新增权限管理 API
+- `src/routes/admin.ts` - 新增权限管理 API（含查看权限接口）
 - `src/routes/auth.ts` - 修改 `/api/agents` 查询逻辑
-- `src/ws/router.ts` - 会话创建时增加权限验证
+- `src/ws/router.ts` - Agent 注册时支持 username 查找用户，会话创建时增加权限验证
 
 ### Agent (packages/agent)
-- `src/config.ts` - USER_ID 默认值改为 1
+- `src/config.ts` - 使用 USERNAME 环境变量，默认 'admin'
+- `src/tunnel.ts` - 注册时发送 username 而非 userId
 
 ### 前端 (packages/web)
-- 管理界面：新增 Agent 权限管理页面
+- 管理界面：在 admin 设置页面新增 Agent 授权模块
+  - Agent/用户下拉选择
+  - 权限查看功能（双向）
+  - 批量授权/移除操作
+  - 转移所有者功能
 - 用户界面：Agent 列表显示"所有者"标识（可选）
 
 ## 测试要点
 
-1. Agent 安装时指定 USER_ID 与默认行为的正确性
-2. 批量授权/移除权限的笛卡尔积正确性
-3. 所有者转移后权限变化正确性
-4. 用户只能看到有权限的 Agent
-5. 无权限用户无法创建会话
+1. Agent 安装时使用 USERNAME 绑定用户，默认 admin
+2. 用户名不存在时 Agent 注册失败
+3. 查看 Agent 权限：显示所有者和共享用户列表
+4. 查看用户权限：显示拥有的 Agent 和可使用的 Agent
+5. 批量授权/移除权限的笛卡尔积正确性
+6. 所有者转移后权限变化正确性
+7. 用户只能看到有权限的 Agent
+8. 无权限用户无法创建会话

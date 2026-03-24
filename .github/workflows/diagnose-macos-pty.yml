@@ -5,7 +5,7 @@ on:
 
 jobs:
   diagnose:
-    runs-on: macos-latest
+    runs-on: macos-13  # Try older macOS version
     timeout-minutes: 10
 
     steps:
@@ -84,6 +84,11 @@ jobs:
         run: |
           echo "=== Check node-pty module ==="
           ls -la node_modules/node-pty/build/Release/
+
+          echo ""
+          echo "=== Check node-pty version and arch ==="
+          node -e "console.log(require('node-pty/package.json').version)"
+          node -e "console.log(process.arch, process.platform)"
 
           echo ""
           echo "=== Try rebuilding node-pty ==="

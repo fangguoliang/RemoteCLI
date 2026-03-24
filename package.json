@@ -11,6 +11,6 @@
     "typescript": "^5.3.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["bcrypt", "better-sqlite3"]
+    "onlyBuiltDependencies": ["bcrypt", "better-sqlite3", "node-pty"]
   }
 }

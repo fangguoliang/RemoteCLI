@@ -12,12 +12,27 @@ export interface TransferProgress {
   error?: string;
 }
 
+export interface ValidatedPath {
+  originalPath: string;
+  resolvedPath: string;
+  exists: boolean;
+}
+
 export const useFileStore = defineStore('file', () => {
   const currentPath = ref<string>('');
   const entries = ref<FileEntry[]>([]);
   const loading = ref(false);
   const error = ref<string | null>(null);
   const transfers = ref<TransferProgress[]>([]);
+
+  // Markdown viewer state
+  const validatingPath = ref<string | null>(null);
+  const validatedPath = ref<ValidatedPath | null>(null);
+  const viewerVisible = ref(false);
+  const viewerContent = ref<string>('');
+  const viewerLoading = ref(false);
+  const viewerPath = ref<string>('');
+  const viewerSaving = ref(false);
 
   function setPath(path: string) {
     currentPath.value = path;
@@ -57,6 +72,45 @@ export const useFileStore = defineStore('file', () => {
     transfers.value = transfers.value.filter(t => t.status === 'in_progress');
   }
 
+  // Viewer methods
+  function setValidatingPath(path: string | null) {
+    validatingPath.value = path;
+  }
+
+  function setValidatedPath(result: ValidatedPath | null) {
+    validatedPath.value = result;
+  }
+
+  function setViewerVisible(visible: boolean) {
+    viewerVisible.value = visible;
+  }
+
+  function setViewerContent(content: string) {
+    viewerContent.value = content;
+  }
+
+  function setViewerLoading(loading: boolean) {
+    viewerLoading.value = loading;
+  }
+
+  function setViewerPath(path: string) {
+    viewerPath.value = path;
+  }
+
+  function setViewerSaving(saving: boolean) {
+    viewerSaving.value = saving;
+  }
+
+  function clearViewer() {
+    viewerVisible.value = false;
+    viewerContent.value = '';
+    viewerPath.value = '';
+    viewerLoading.value = false;
+    viewerSaving.value = false;
+    validatedPath.value = null;
+    validatingPath.value = null;
+  }
+
   return {
     currentPath,
     entries,
@@ -71,5 +125,21 @@ export const useFileStore = defineStore('file', () => {
     updateTransfer,
     removeTransfer,
     clearCompletedTransfers,
+    // Markdown viewer
+    validatingPath,
+    validatedPath,
+    viewerVisible,
+    viewerContent,
+    viewerLoading,
+    viewerPath,
+    viewerSaving,
+    setValidatingPath,
+    setValidatedPath,
+    setViewerVisible,
+    setViewerContent,
+    setViewerLoading,
+    setViewerPath,
+    setViewerSaving,
+    clearViewer,
   };
 });

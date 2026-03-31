@@ -32,9 +32,11 @@ When using Claude Code through RemoteCLI on a mobile device, markdown files are 
 ```
 Terminal Output → LinkMatcher detects .md path → User clicks →
 file:validate request → Agent validates & returns full path →
-file:download content → MarkdownViewer popup opens (preview mode) →
+file:downloadForView (in-memory) → MarkdownViewer popup opens (preview mode) →
 Swipe right → Edit mode → Save → file:upload → Auto-sync → Toast notification
 ```
+
+**Note**: Unlike regular file downloads that trigger browser file downloads, markdown preview requires content loaded into memory. A separate download method `downloadForView()` stores content in fileStore instead of triggering browser download.
 
 ### Components
 
@@ -66,16 +68,96 @@ Swipe right → Edit mode → Save → file:upload → Auto-sync → Toast notif
    'file:validate' | 'file:validated'
    ```
 
-2. **agent/src/file.ts** - New handler
-   - Receive `file:validate` request
-   - Get current working directory from PTY process
-   - Resolve relative path to absolute path
-   - Check if file exists
-   - Return `file:validated` response
+2. **agent/src/file.ts** - Add validation handler
 
-3. **server/src/ws/router.ts** - Route new message type
-   - Forward `file:validate` to Agent
-   - Forward `file:validated` back to browser
+The existing `FileManager` class handles file operations but doesn't have access to session IDs or working directories. We need to add validation handling that bridges `FileManager` and `PtyManager`:
+
+**Option A: Add validation method to FileManager with PtyManager dependency:**
+```typescript
+// In packages/agent/src/file.ts
+import { ptyManager } from './pty';
+import * as path from 'path';
+import * as fs from 'fs';
+
+export class FileManager {
+  // ... existing methods ...
+
+  // NEW: Validate file path with session context
+  validatePath(payload: FileValidatePayload): FileValidatedPayload {
+    const { path: inputPath, sessionId } = payload;
+
+    // Get working directory from PtyManager
+    const cwd = ptyManager.getWorkingDirectory(sessionId);
+    if (!cwd) {
+      return {
+        originalPath: inputPath,
+        resolvedPath: inputPath,
+        exists: false,
+        error: 'Session not found or no working directory'
+      };
+    }
+
+    // Resolve relative paths
+    let resolvedPath = inputPath;
+    if (!inputPath.match(/^[A-Za-z]:/)) {
+      resolvedPath = path.resolve(cwd, inputPath);
+    }
+
+    // Check existence
+    const exists = fs.existsSync(resolvedPath);
+
+    return {
+      originalPath: inputPath,
+      resolvedPath,
+      exists,
+      error: exists ? undefined : 'File not found'
+    };
+  }
+}
+```
+
+**Option B (Recommended): Create separate validation handler that imports both managers:**
+```typescript
+// In packages/agent/src/validation.ts (new file)
+import { ptyManager } from './pty';
+import * as path from 'path';
+import * as fs from 'fs';
+
+export function validateFilePath(payload: FileValidatePayload): FileValidatedPayload {
+  // Same implementation as above
+}
+```
+
+3. **server/src/ws/router.ts** - Route new message types
+
+Following existing pattern in router.ts (browser→agent messages go through one case block, agent→browser through another):
+
+```typescript
+// Add to existing browser-to-agent case block (around line handling 'file:browse' etc)
+case 'file:validate':
+  // Browser requests path validation
+  if (session.agentId && message.sessionId) {
+    tunnelManager.sendToAgent(session.agentId, {
+      type: 'file:validate',
+      payload: message.payload,
+      sessionId: message.sessionId,
+      timestamp: Date.now()
+    });
+  }
+  break;
+
+// Add to existing agent-to-browser case block (around line handling 'file:list' etc)
+case 'file:validated':
+  // Agent returns validation result
+  if (message.sessionId) {
+    tunnelManager.sendToBrowserSession(message.sessionId, {
+      type: 'file:validated',
+      payload: message.payload,
+      timestamp: Date.now()
+    });
+  }
+  break;
+```
 
 ## Technical Details
 
@@ -83,18 +165,35 @@ Swipe right → Edit mode → Save → file:upload → Auto-sync → Toast notif
 
 ```typescript
 // Match .md file paths in various formats
-const mdPathRegex = new RegExp(
+// Simplified regex - may over-match slightly but acceptable for user-triggered action
+const mdPathRegex = /[A-Za-z]:[\\/][^\s]+\.md|\.{1,2}[\\/][^\s]+\.md|[^\s]+\.md/g;
+
+// More precise version with negative lookahead to avoid partial matches:
+const mdPathRegexPrecise = new RegExp(
   // Absolute Windows paths: D:\path\file.md, C:\Users\...\file.md
-  '[A-Za-z]:[\\\\/][^\\s]*\\.md' +
+  '(?:[A-Za-z]:[\\\\/][^\\s]+\\.md)' +
   '|' +
-  // Relative paths with ./ or ../ prefix
-  '\\.\\.?[\\\\/][^\\s]*\\.md' +
+  // Relative paths with ./ or ../ prefix: ./docs/spec.md, ../file.md
+  '(?:\\.{1,2}[\\\\/][^\\s]+\\.md)' +
   '|' +
-  // Simple relative paths: docs/file.md, file.md
-  '(?<![A-Za-z]:)[^\\s\\\\/][^\\s]*\\.md',
+  // Simple relative paths (not starting with drive letter): docs/file.md, file.md
+  '(?:^(?![A-Za-z]:)[^\\s]+\\.md)',
   'g'
 );
 ```
+
+**Test cases (for implementation verification):**
+| Input | Expected Match |
+|-------|----------------|
+| `D:\project\README.md` | `D:\project\README.md` |
+| `C:\Users\admin\docs\spec.md` | `C:\Users\admin\docs\spec.md` |
+| `./docs/spec.md` | `./docs/spec.md` |
+| `../README.md` | `../README.md` |
+| `docs/file.md` | `docs/file.md` |
+| `file.md` | `file.md` |
+| `Created file: D:\test.md` | `D:\test.md` |
+| `\\server\share\file.md` | Not matched (UNC paths excluded for simplicity) |
+| `D:\my docs\file.md` | `D:\my` (truncated - acceptable limitation) |
 
 ### Message Types
 
@@ -120,18 +219,42 @@ interface FileValidatedPayload {
 
 ### LinkMatcher Implementation
 
-Use xterm.js addon system or inline link matching:
+**Architecture Note**: `TerminalTab.vue` uses its own WebSocket connection for terminal I/O (the `ws` variable). File operations use a separate `fileWebSocket` service accessed through `useFileStore()`.
 
 ```typescript
-// In TerminalTab.vue
+// In TerminalTab.vue script setup section
+import { useFileStore } from '@/stores/file';
+import { fileWebSocket } from '@/services/fileWebSocket';
+
+const fileStore = useFileStore();
+
+// sessionId is tracked as local variable in TerminalTab.vue
+// It's set when session:created message is received
+
+// Register link matcher after terminal is initialized
 terminal.registerLinkMatcher(mdPathRegex, (event, matchedPath) => {
-  // Send validation request
-  fileWebSocket.validatePath(matchedPath, sessionId);
+  // Validate: fileWebSocket must be connected, sessionId must exist
+  if (!sessionId) {
+    console.warn('No session ID, cannot validate path');
+    return;
+  }
+
+  // Set validation state in store (triggers MarkdownViewer to open on success)
+  fileStore.setValidatingPath(matchedPath);
+
+  // Send validation request via fileWebSocket
+  fileWebSocket.validatePath(matchedPath, sessionId, props.tab.agentId);
 }, {
   matchIndex: 0,
   priority: 0
 });
 ```
+
+**Integration Flow**:
+1. LinkMatcher callback sets `fileStore.validatingPath` state
+2. `fileWebSocket.validatePath()` sends `file:validate` message
+3. On `file:validated` response, `fileWebSocket` handler updates store
+4. `MarkdownViewer.vue` watches store state and opens popup
 
 ### Swipe Gesture Detection
 
@@ -173,11 +296,109 @@ const handleTouchEnd = (e: TouchEvent) => {
 
 ### Current Working Directory Resolution
 
-Agent maintains session working directory:
-- On PTY spawn, record initial directory
-- Monitor `cd` commands in terminal output
-- Parse PowerShell prompt: `PS D:\project>` format
-- Store in session state for path resolution
+**Problem**: Agent's `PtyManager` in `packages/agent/src/pty.ts` currently does not track working directory. The `PtySession` interface only stores `{ pty, sessionId, cols, rows, onDataCallback }`.
+
+**Solution**: Extend PtyManager to track working directory per session.
+
+#### Implementation Details
+
+**1. Extend PtySession interface (packages/agent/src/pty.ts):**
+
+```typescript
+interface PtySession {
+  pty: IPty;
+  sessionId: string;
+  cols: number;
+  rows: number;
+  onDataCallback: (data: string) => void;
+  workingDirectory: string;  // NEW: Track current working directory
+}
+```
+
+**2. Initialize working directory on PTY spawn:**
+
+```typescript
+// In PtyManager.createSession()
+const pty = spawn('powershell.exe', [], {
+  cols,
+  rows,
+  cwd: process.cwd(), // Initial working directory
+  env: process.env
+});
+
+const session: PtySession = {
+  pty,
+  sessionId,
+  cols,
+  rows,
+  onDataCallback,
+  workingDirectory: process.cwd() // Initialize with spawn cwd
+};
+```
+
+**3. Parse PowerShell prompt from output:**
+
+```typescript
+// Add prompt parser method to PtyManager
+private parsePromptForDirectory(data: string): string | null {
+  // PowerShell prompt format: "PS D:\project> " or "PS C:\Users\admin> "
+  const promptMatch = data.match(/PS\s+([A-Za-z]:[^\r\n>]+)>/);
+  if (promptMatch) {
+    return promptMatch[1].trim();
+  }
+  return null;
+}
+
+// In onData handler, update working directory when prompt appears
+pty.onData((data: string) => {
+  const newDir = this.parsePromptForDirectory(data);
+  if (newDir) {
+    session.workingDirectory = newDir;
+  }
+  session.onDataCallback(data);
+});
+```
+
+**4. Add getter method:**
+
+```typescript
+// In PtyManager
+getWorkingDirectory(sessionId: string): string | null {
+  const session = this.sessions.get(sessionId);
+  return session?.workingDirectory ?? null;
+}
+```
+
+**5. File validation handler uses PtyManager:**
+
+```typescript
+// In packages/agent/src/file.ts (or new validation handler)
+import { ptyManager } from './pty';
+
+// Handle file:validate message
+const handleFileValidate = (payload: FileValidatePayload) => {
+  const { path, sessionId } = payload;
+
+  // Get working directory from session
+  const cwd = ptyManager.getWorkingDirectory(sessionId);
+
+  // Resolve path
+  let resolvedPath = path;
+  if (!path.match(/^[A-Za-z]:/)) {
+    // Relative path - resolve against cwd
+    resolvedPath = cwd ? path.resolve(cwd, path) : path;
+  }
+
+  // Check existence
+  const exists = fs.existsSync(resolvedPath);
+
+  return {
+    originalPath: path,
+    resolvedPath,
+    exists
+  };
+};
+```
 
 ## UI/UX Specifications
 
@@ -265,23 +486,29 @@ Agent maintains session working directory:
 
 | Package | File | Action | Description |
 |---------|------|--------|-------------|
-| shared | `src/types.ts` | Modify | Add `file:validate`, `file:validated` message types and payload interfaces |
-| web | `components/MarkdownViewer.vue` | Create | New fullscreen markdown viewer/editor component |
-| web | `components/TerminalTab.vue` | Modify | Add LinkMatcher for .md paths, integrate MarkdownViewer |
-| web | `services/fileWebSocket.ts` | Modify | Add validate method and validated response handler |
-| web | `stores/file.ts` | Modify | Add file validation state and methods |
-| agent | `src/file.ts` | Modify | Add file validation handler with path resolution |
-| server | `src/ws/router.ts` | Modify | Route file:validate and file:validated messages |
+| shared | `src/types.ts` | Modify | Add `file:validate`, `file:validated` message types and `FileValidatePayload`, `FileValidatedPayload` interfaces |
+| agent | `src/pty.ts` | Modify | Extend `PtySession` interface to include `workingDirectory`, add `getWorkingDirectory()` method, parse PowerShell prompts |
+| agent | `src/validation.ts` | Create | New file validation handler with dependency on PtyManager |
+| agent | `src/tunnel.ts` | Modify | Handle `file:validate` and `file:validated` message routing |
+| server | `src/ws/router.ts` | Modify | Add switch cases for routing `file:validate` and `file:validated` messages |
+| web | `package.json` | Modify | Add `md-editor-v3` dependency |
+| web | `components/MarkdownViewer.vue` | Create | New fullscreen markdown viewer/editor component with swipe gesture support |
+| web | `components/TerminalTab.vue` | Modify | Add LinkMatcher for .md paths, import fileWebSocket, integrate MarkdownViewer |
+| web | `services/fileWebSocket.ts` | Modify | Add `validatePath()` method and `file:validated` response handler, add `downloadForView()` method |
+| web | `stores/file.ts` | Modify | Add `validatingPath`, `viewerContent`, `viewerVisible` state and methods |
 
 ## Implementation Order
 
-1. shared/types.ts - Add message types
-2. agent/src/file.ts - Add validation handler
-3. server/src/ws/router.ts - Add message routing
-4. web/services/fileWebSocket.ts - Add validate method
-5. web/stores/file.ts - Add validation state
-6. web/components/MarkdownViewer.vue - Create component
-7. web/components/TerminalTab.vue - Add LinkMatcher and integration
+1. **shared/types.ts** - Add `file:validate`, `file:validated` message types and payload interfaces
+2. **agent/src/pty.ts** - Extend PtySession with workingDirectory, add getWorkingDirectory() method
+3. **agent/src/validation.ts** - Create file validation handler module
+4. **agent/src/tunnel.ts** - Handle file:validate/file:validated messages
+5. **server/src/ws/router.ts** - Add message routing switch cases
+6. **web/package.json** - Add md-editor-v3 dependency
+7. **web/services/fileWebSocket.ts** - Add validatePath() and downloadForView() methods
+8. **web/stores/file.ts** - Add viewer state and methods
+9. **web/components/MarkdownViewer.vue** - Create component
+10. **web/components/TerminalTab.vue** - Add LinkMatcher and integration
 
 ## Out of Scope
 

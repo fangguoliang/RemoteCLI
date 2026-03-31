@@ -478,6 +478,10 @@ class FileWebSocketService {
     this.send(message);
   }
 
+  public isConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
   on(type: string, handler: MessageHandler) {
     if (!this.messageHandlers.has(type)) {
       this.messageHandlers.set(type, []);

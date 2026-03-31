@@ -32,14 +32,14 @@
 
       <!-- Toast -->
       <Transition name="fade">
-        <div v-if="showToast" class="toast">{{ toastMessage }}</div>
+        <div v-if="showToast" class="toast" :class="{ 'toast-error': isErrorToast }">{{ toastMessage }}</div>
       </Transition>
     </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onUnmounted } from 'vue';
 import { MdEditor } from 'md-editor-v3';
 import 'md-editor-v3/lib/style.css';
 import { useFileStore } from '@/stores/file';
@@ -57,16 +57,18 @@ const content = ref('');
 const isEditMode = ref(false);
 const showToast = ref(false);
 const toastMessage = ref('');
+const isErrorToast = ref(false);
+let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const fileName = computed(() => {
   const path = filePath.value;
   return path ? path.split(/[/\\]/).pop() || path : 'file.md';
 });
 
-// Sync content from store
+// Sync content from store (immediate for initial content)
 watch(storeContent, (newContent) => {
   content.value = newContent;
-});
+}, { immediate: true });
 
 // Swipe gesture handling
 let touchStartX = 0;
@@ -89,12 +91,23 @@ function handleTouchEnd(e: TouchEvent) {
 }
 
 function handleClose() {
+  // Clean up any pending toast
+  if (toastTimeout) {
+    clearTimeout(toastTimeout);
+    toastTimeout = null;
+  }
   store.clearViewer();
   isEditMode.value = false;
 }
 
-async function handleSave() {
+function handleSave() {
   if (saving.value) return;
+
+  // Check WebSocket connection
+  if (!fileWebSocket.isConnected()) {
+    showErrorToast('未连接到服务器，请稍后重试');
+    return;
+  }
 
   store.setViewerSaving(true);
 
@@ -148,27 +161,45 @@ watch(() => store.transfers.find(t => t.path === filePath.value)?.status, (statu
   if (status === 'completed') {
     store.setViewerSaving(false);
     showSuccessToast('已同步到 Agent');
+    // Clean up transfer after success
+    setTimeout(() => store.removeTransfer(filePath.value), 100);
   } else if (status === 'error') {
     store.setViewerSaving(false);
     showErrorToast('同步失败，请重试');
+    // Clean up transfer after error
+    setTimeout(() => store.removeTransfer(filePath.value), 100);
   }
 });
 
 function showSuccessToast(message: string) {
+  isErrorToast.value = false;
   toastMessage.value = message;
   showToast.value = true;
-  setTimeout(() => {
+  if (toastTimeout) clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => {
     showToast.value = false;
+    toastTimeout = null;
   }, 3000);
 }
 
 function showErrorToast(message: string) {
+  isErrorToast.value = true;
   toastMessage.value = message;
   showToast.value = true;
-  setTimeout(() => {
+  if (toastTimeout) clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => {
     showToast.value = false;
+    toastTimeout = null;
   }, 3000);
 }
+
+// Clean up on unmount
+onUnmounted(() => {
+  if (toastTimeout) {
+    clearTimeout(toastTimeout);
+    toastTimeout = null;
+  }
+});
 </script>
 
 <style scoped>
@@ -272,6 +303,10 @@ function showErrorToast(message: string) {
   border-radius: 8px;
   font-size: 14px;
   z-index: 1001;
+}
+
+.toast-error {
+  background: rgba(244, 67, 54, 0.9);
 }
 
 .fade-enter-active, .fade-leave-active {

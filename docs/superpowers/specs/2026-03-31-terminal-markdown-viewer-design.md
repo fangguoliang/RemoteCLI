@@ -166,34 +166,25 @@ case 'file:validated':
 ```typescript
 // Match .md file paths in various formats
 // Simplified regex - may over-match slightly but acceptable for user-triggered action
-const mdPathRegex = /[A-Za-z]:[\\/][^\s]+\.md|\.{1,2}[\\/][^\s]+\.md|[^\s]+\.md/g;
+// Excludes URLs (http/https) to avoid conflict with WebLinksAddon
 
-// More precise version with negative lookahead to avoid partial matches:
-const mdPathRegexPrecise = new RegExp(
-  // Absolute Windows paths: D:\path\file.md, C:\Users\...\file.md
-  '(?:[A-Za-z]:[\\\\/][^\\s]+\\.md)' +
-  '|' +
-  // Relative paths with ./ or ../ prefix: ./docs/spec.md, ../file.md
-  '(?:\\.{1,2}[\\\\/][^\\s]+\\.md)' +
-  '|' +
-  // Simple relative paths (not starting with drive letter): docs/file.md, file.md
-  '(?:^(?![A-Za-z]:)[^\\s]+\\.md)',
-  'g'
-);
+const mdPathRegex = /[A-Za-z]:[\\/][^\s]+\.md|\.{1,2}[\\/][^\s]+\.md|(?:^(?![A-Za-z]:|https?:)[^\s]+\.md)/g;
 ```
 
 **Test cases (for implementation verification):**
-| Input | Expected Match |
-|-------|----------------|
-| `D:\project\README.md` | `D:\project\README.md` |
-| `C:\Users\admin\docs\spec.md` | `C:\Users\admin\docs\spec.md` |
-| `./docs/spec.md` | `./docs/spec.md` |
-| `../README.md` | `../README.md` |
-| `docs/file.md` | `docs/file.md` |
-| `file.md` | `file.md` |
-| `Created file: D:\test.md` | `D:\test.md` |
-| `\\server\share\file.md` | Not matched (UNC paths excluded for simplicity) |
-| `D:\my docs\file.md` | `D:\my` (truncated - acceptable limitation) |
+| Input | Expected Match | Notes |
+|-------|----------------|-------|
+| `D:\project\README.md` | `D:\project\README.md` | Absolute Windows path |
+| `C:\Users\admin\docs\spec.md` | `C:\Users\admin\docs\spec.md` | Absolute Windows path |
+| `./docs/spec.md` | `./docs/spec.md` | Relative with ./ prefix |
+| `../README.md` | `../README.md` | Relative with ../ prefix |
+| `docs/file.md` | `docs/file.md` | Simple relative path |
+| `file.md` | `file.md` | Simple relative path |
+| `Created file: D:\test.md` | `D:\test.md` | Embedded in text |
+| `https://example.com/file.md` | Not matched | URL excluded |
+| `http://docs/spec.md` | Not matched | URL excluded |
+| `\\server\share\file.md` | Not matched | UNC paths excluded |
+| `D:\my docs\file.md` | `D:\my` (truncated) | Space limitation - acceptable |
 
 ### Message Types
 
@@ -398,6 +389,140 @@ const handleFileValidate = (payload: FileValidatePayload) => {
     exists
   };
 };
+```
+
+### Agent Tunnel Handler
+
+**Note**: Unlike other file operations, `file:validate` requires sessionId because it needs to resolve relative paths against the session's working directory.
+
+```typescript
+// In packages/agent/src/tunnel.ts
+
+// Add to switch statement (handle incoming browser messages)
+case 'file:validate':
+  this.handleFileValidate(payload, sessionId);
+  break;
+
+// Add new handler method
+private handleFileValidate(payload: FileValidatePayload, sessionId: string) {
+  // Import the validation function from validation.ts
+  const result = validateFilePath({ ...payload, sessionId });
+
+  // Send result back to browser
+  this.send({
+    type: 'file:validated',
+    sessionId,
+    payload: result,
+    timestamp: Date.now(),
+  });
+}
+```
+
+### Frontend WebSocket Service Methods
+
+**fileWebSocket.ts additions:**
+
+```typescript
+// Validate a file path (returns via file:validated message)
+validatePath(path: string, sessionId: string, agentId: string) {
+  if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    console.error('WebSocket not connected');
+    return;
+  }
+
+  this.ws.send(JSON.stringify({
+    type: 'file:validate',
+    payload: { path, sessionId },
+    sessionId,  // Include at message level for server routing
+    timestamp: Date.now(),
+  }));
+}
+
+// Download file for viewing (in-memory, not browser download)
+// Uses a flag to distinguish from regular downloads
+downloadForView(path: string, agentId: string) {
+  if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    console.error('WebSocket not connected');
+    return;
+  }
+
+  // Store the path as "for viewing" flag
+  this.viewingPath = path;
+
+  this.ws.send(JSON.stringify({
+    type: 'file:download',
+    payload: { path },
+    timestamp: Date.now(),
+  }));
+}
+
+// Modified handleFileData to support in-memory viewing
+private handleFileData(msg: Message) {
+  const payload = msg.payload as FileDataPayload;
+
+  // Check if this is a "for viewing" download
+  if (this.viewingPath === payload.path) {
+    // Assemble chunks in memory, store to fileStore when complete
+    this.assembleViewContent(payload);
+    return;
+  }
+
+  // Regular download: trigger browser file download
+  // ... existing code ...
+}
+```
+
+### File Store State Additions
+
+**stores/file.ts additions:**
+
+```typescript
+// New state refs for markdown viewer
+const validatingPath = ref<string | null>(null);    // Path being validated
+const validatedPath = ref<ValidatedPath | null>(null); // Validation result
+const viewerVisible = ref(false);                    // Viewer popup visibility
+const viewerContent = ref<string>('');               // Markdown content in memory
+const viewerLoading = ref(false);                    // Loading indicator
+const viewerPath = ref<string>('');                  // Current viewing file path
+
+interface ValidatedPath {
+  originalPath: string;
+  resolvedPath: string;
+  exists: boolean;
+}
+
+// New methods
+function setValidatingPath(path: string | null) {
+  validatingPath.value = path;
+}
+
+function setValidatedPath(result: ValidatedPath | null) {
+  validatedPath.value = result;
+}
+
+function setViewerVisible(visible: boolean) {
+  viewerVisible.value = visible;
+}
+
+function setViewerContent(content: string) {
+  viewerContent.value = content;
+}
+
+function setViewerLoading(loading: boolean) {
+  viewerLoading.value = loading;
+}
+
+function setViewerPath(path: string) {
+  viewerPath.value = path;
+}
+
+function clearViewer() {
+  viewerVisible.value = false;
+  viewerContent.value = '';
+  viewerPath.value = '';
+  validatedPath.value = null;
+  validatingPath.value = null;
+}
 ```
 
 ## UI/UX Specifications

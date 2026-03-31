@@ -7,6 +7,7 @@ export interface PtySession {
   cols: number;
   rows: number;
   onDataCallback: ((data: string) => void) | null;
+  workingDirectory: string;  // Track current working directory
 }
 
 export class PtyManager {
@@ -37,9 +38,16 @@ export class PtyManager {
       cols,
       rows,
       onDataCallback: onData,
+      workingDirectory: cwd,  // Initialize with spawn cwd
     };
 
     ptyProcess.onData((data) => {
+      // Update working directory from PowerShell prompt
+      const newDir = this.parsePromptForDirectory(data);
+      if (newDir) {
+        session.workingDirectory = newDir;
+      }
+
       if (session.onDataCallback) {
         session.onDataCallback(data);
       } else {
@@ -143,6 +151,12 @@ export class PtyManager {
     return this.sessions.has(sessionId);
   }
 
+  // Get the current working directory of a session
+  getWorkingDirectory(sessionId: string): string | null {
+    const session = this.sessions.get(sessionId);
+    return session?.workingDirectory ?? null;
+  }
+
   // Internal cleanup
   private cleanupSession(sessionId: string): void {
     // Clear timeout if exists
@@ -161,5 +175,15 @@ export class PtyManager {
 
   get(sessionId: string): PtySession | undefined {
     return this.sessions.get(sessionId);
+  }
+
+  // Parse PowerShell prompt to extract current working directory
+  private parsePromptForDirectory(data: string): string | null {
+    // PowerShell prompt format: "PS D:\project> " or "PS C:\Users\admin> "
+    const promptMatch = data.match(/PS\s+([A-Za-z]:[^\r\n>]+)>/);
+    if (promptMatch) {
+      return promptMatch[1].trim();
+    }
+    return null;
   }
 }

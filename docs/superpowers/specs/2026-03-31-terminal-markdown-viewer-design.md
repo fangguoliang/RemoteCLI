@@ -130,31 +130,35 @@ export function validateFilePath(payload: FileValidatePayload): FileValidatedPay
 
 3. **server/src/ws/router.ts** - Route new message types
 
-Following existing pattern in router.ts (browser→agent messages go through one case block, agent→browser through another):
+Following existing pattern in router.ts:
 
 ```typescript
-// Add to existing browser-to-agent case block (around line handling 'file:browse' etc)
+// Add to switch statement in handleMessage()
+
+// Browser -> Agent: validate file path
+// Note: Unlike other file operations, file:validate requires sessionId
+// because it needs to resolve relative paths against the session's working directory.
+// The browser is already bound to an agent via the terminal session.
 case 'file:validate':
-  // Browser requests path validation
-  if (session.agentId && message.sessionId) {
-    tunnelManager.sendToAgent(session.agentId, {
-      type: 'file:validate',
-      payload: message.payload,
-      sessionId: message.sessionId,
-      timestamp: Date.now()
-    });
+  if (sessionId) {
+    const browser = tunnelManager.getBrowser(ws);
+    if (browser?.agentId) {
+      tunnelManager.routeToAgent(browser.agentId, message);
+    } else {
+      ws.send(JSON.stringify({
+        type: 'file:validated',
+        payload: { originalPath: message.payload?.path, resolvedPath: '', exists: false, error: 'No agent session' },
+        timestamp: Date.now(),
+      }));
+    }
   }
   break;
 
-// Add to existing agent-to-browser case block (around line handling 'file:list' etc)
+// Agent -> Browser: validation result
+// Route to specific browser session via sessionId
 case 'file:validated':
-  // Agent returns validation result
-  if (message.sessionId) {
-    tunnelManager.sendToBrowserSession(message.sessionId, {
-      type: 'file:validated',
-      payload: message.payload,
-      timestamp: Date.now()
-    });
+  if (isAgent && sessionId) {
+    tunnelManager.routeToBrowser(sessionId, message);
   }
   break;
 ```
@@ -423,60 +427,81 @@ private handleFileValidate(payload: FileValidatePayload, sessionId: string) {
 **fileWebSocket.ts additions:**
 
 ```typescript
-// Validate a file path (returns via file:validated message)
-validatePath(path: string, sessionId: string, agentId: string) {
-  if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-    console.error('WebSocket not connected');
-    return;
+// Add property to track in-memory viewing downloads
+class FileWebSocketService {
+  private ws: WebSocket | null = null;
+  private messageHandlers = new Map<string, MessageHandler[]>();
+  private transferChunks = new Map<string, { chunks: string[], totalChunks: number, totalSize: number }>();
+  private viewingPath: string | null = null; // NEW: track path for in-memory viewing
+  // ... existing properties ...
+
+  // Validate a file path (returns via file:validated message)
+  validatePath(path: string, sessionId: string, agentId: string) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.error('WebSocket not connected');
+      return;
+    }
+
+    this.ws.send(JSON.stringify({
+      type: 'file:validate',
+      payload: { path, sessionId },
+      sessionId,  // Include at message level for server routing
+      timestamp: Date.now(),
+    }));
   }
 
-  this.ws.send(JSON.stringify({
-    type: 'file:validate',
-    payload: { path, sessionId },
-    sessionId,  // Include at message level for server routing
-    timestamp: Date.now(),
-  }));
-}
+  // Download file for viewing (in-memory, not browser download)
+  // Uses a flag to distinguish from regular downloads
+  downloadForView(path: string, agentId: string) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.error('WebSocket not connected');
+      return;
+    }
 
-// Download file for viewing (in-memory, not browser download)
-// Uses a flag to distinguish from regular downloads
-downloadForView(path: string, agentId: string) {
-  if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-    console.error('WebSocket not connected');
-    return;
+    // Store the path as "for viewing" flag
+    this.viewingPath = path;
+
+    this.ws.send(JSON.stringify({
+      type: 'file:download',
+      payload: { path },
+      timestamp: Date.now(),
+    }));
   }
 
-  // Store the path as "for viewing" flag
-  this.viewingPath = path;
+  // Modified handleFileData to support in-memory viewing
+  private handleFileData(msg: Message) {
+    const payload = msg.payload as FileDataPayload;
 
-  this.ws.send(JSON.stringify({
-    type: 'file:download',
-    payload: { path },
-    timestamp: Date.now(),
-  }));
-}
+    // Check if this is a "for viewing" download
+    if (this.viewingPath === payload.path) {
+      // Assemble chunks in memory, store to fileStore when complete
+      this.assembleViewContent(payload);
+      return;
+    }
 
-// Modified handleFileData to support in-memory viewing
-private handleFileData(msg: Message) {
-  const payload = msg.payload as FileDataPayload;
-
-  // Check if this is a "for viewing" download
-  if (this.viewingPath === payload.path) {
-    // Assemble chunks in memory, store to fileStore when complete
-    this.assembleViewContent(payload);
-    return;
+    // Regular download: trigger browser file download
+    // ... existing code ...
   }
 
-  // Regular download: trigger browser file download
-  // ... existing code ...
+  // Assemble content for in-memory viewing
+  private assembleViewContent(payload: FileDataPayload) {
+    // Similar to assembleDownload but store to fileStore instead of triggering download
+    // When complete, set fileStore.viewerContent and fileStore.viewerLoading = false
+  }
 }
-```
 
 ### File Store State Additions
 
 **stores/file.ts additions:**
 
 ```typescript
+// New interface - export for use in MarkdownViewer.vue
+export interface ValidatedPath {
+  originalPath: string;
+  resolvedPath: string;
+  exists: boolean;
+}
+
 // New state refs for markdown viewer
 const validatingPath = ref<string | null>(null);    // Path being validated
 const validatedPath = ref<ValidatedPath | null>(null); // Validation result
@@ -484,12 +509,6 @@ const viewerVisible = ref(false);                    // Viewer popup visibility
 const viewerContent = ref<string>('');               // Markdown content in memory
 const viewerLoading = ref(false);                    // Loading indicator
 const viewerPath = ref<string>('');                  // Current viewing file path
-
-interface ValidatedPath {
-  originalPath: string;
-  resolvedPath: string;
-  exists: boolean;
-}
 
 // New methods
 function setValidatingPath(path: string | null) {

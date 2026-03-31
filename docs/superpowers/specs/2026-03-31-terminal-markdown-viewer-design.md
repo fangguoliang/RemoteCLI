@@ -431,7 +431,7 @@ private handleFileValidate(payload: FileValidatePayload, sessionId: string) {
 class FileWebSocketService {
   private ws: WebSocket | null = null;
   private messageHandlers = new Map<string, MessageHandler[]>();
-  private transferChunks = new Map<string, { chunks: string[], totalChunks: number, totalSize: number }>();
+  private transferChunks = new Map<string, { chunks: Map<number, string>; totalChunks: number; totalSize: number }>();
   private viewingPath: string | null = null; // NEW: track path for in-memory viewing
   // ... existing properties ...
 

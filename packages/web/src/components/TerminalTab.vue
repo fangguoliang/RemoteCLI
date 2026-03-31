@@ -50,8 +50,9 @@ const COMMAND_START_DELAY = 100; // ms
 const TERMINAL_INIT_DELAY = 400; // ms - wait for terminal to initialize and receive output
 
 // Regex to detect .md file paths (absolute and relative)
-// Excludes URLs (http/https) to avoid conflict with WebLinksAddon
-const mdPathRegex = /[A-Za-z]:[\\/][^\s]+\.md|\.{1,2}[\\/][^\s]+\.md|(?:^(?![A-Za-z]:|https?:))[^\s]+\.md/g;
+// Matches: Windows absolute (C:\path\file.md), relative (./file.md, ../file.md, dir/file.md), simple (file.md)
+// URL exclusion is handled in the link provider to avoid partial URL matches
+const mdPathRegex = /[A-Za-z]:[\\/][^\s]+\.md|\.{1,2}[\\/][^\s]+\.md|[^\s]+\.md/g;
 
 // Execution state for cancellation
 let shouldAbortExecution = false;
@@ -235,7 +236,19 @@ function initTerminal() {
       const regex = new RegExp(mdPathRegex.source, 'g');
       while ((match = regex.exec(lineText)) !== null) {
         const matchedPath = match[0];
-        const startX = match.index + 1; // x is 1-based in IBufferCellPosition
+        const matchStart = match.index;
+
+        // Skip matches that are part of URLs (preceded by ://)
+        // Check if this match is part of a URL by looking at characters before the match
+        if (matchStart >= 3 && lineText.substring(matchStart - 3, matchStart) === '://') {
+          continue;
+        }
+        // Also skip if the match looks like a URL fragment (e.g., "s://..." from "https://...")
+        if (/^[a-zA-Z]:[\\/]{2}/.test(matchedPath) && !/^[A-Za-z]:[\\/]/.test(matchedPath)) {
+          continue;
+        }
+
+        const startX = matchStart + 1; // x is 1-based in IBufferCellPosition
         const endX = startX + matchedPath.length;
 
         foundLinks.push({

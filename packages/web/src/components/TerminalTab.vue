@@ -3,6 +3,7 @@
     <div ref="terminalRef" class="terminal"></div>
     <div v-if="status === 'connecting'" class="status-overlay">连接中...</div>
     <div v-if="status === 'disconnected'" class="status-overlay error">已断开</div>
+    <MarkdownViewer />
   </div>
 </template>
 
@@ -15,7 +16,10 @@ import { SerializeAddon } from '@xterm/addon-serialize';
 import { useAuthStore } from '../stores/auth';
 import { useSettingsStore } from '../stores/settings';
 import { useTerminalStore } from '../stores/terminal';
+import { useFileStore } from '../stores/file';
+import { fileWebSocket } from '../services/fileWebSocket';
 import type { Tab } from '../stores/terminal';
+import MarkdownViewer from './MarkdownViewer.vue';
 import 'xterm/css/xterm.css';
 
 const props = defineProps<{ tab: Tab; visible: boolean; autoExecuteCommands?: string[] }>();
@@ -36,6 +40,7 @@ let userScrolledUp = false; // Track if user manually scrolled up from bottom
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
+const fileStore = useFileStore();
 
 // Constants for command execution timing
 const PROMPT_WAIT_INTERVAL = 100; // ms
@@ -43,6 +48,10 @@ const PROMPT_WAIT_MAX_ATTEMPTS = 20; // 2 seconds total
 const COMMAND_SEND_DELAY = 100; // ms
 const COMMAND_START_DELAY = 100; // ms
 const TERMINAL_INIT_DELAY = 400; // ms - wait for terminal to initialize and receive output
+
+// Regex to detect .md file paths (absolute and relative)
+// Excludes URLs (http/https) to avoid conflict with WebLinksAddon
+const mdPathRegex = /[A-Za-z]:[\\/][^\s]+\.md|\.{1,2}[\\/][^\s]+\.md|(?:^(?![A-Za-z]:|https?:))[^\s]+\.md/g;
 
 // Execution state for cancellation
 let shouldAbortExecution = false;
@@ -207,6 +216,55 @@ function initTerminal() {
   terminal.loadAddon(new WebLinksAddon());
   terminal.loadAddon(serializeAddon);
   terminal.open(terminalRef.value);
+
+  // Register link provider for .md file paths (xterm v5 API)
+  terminal.registerLinkProvider({
+    provideLinks(bufferLineNumber: number, callback: (links: any[] | undefined) => void) {
+      const buffer = terminal!.buffer.active;
+      const line = buffer.getLine(bufferLineNumber);
+      if (!line) {
+        callback(undefined);
+        return;
+      }
+
+      const lineText = line.translateToString(true);
+      const foundLinks: any[] = [];
+
+      // Find all .md paths in the line
+      let match;
+      const regex = new RegExp(mdPathRegex.source, 'g');
+      while ((match = regex.exec(lineText)) !== null) {
+        const matchedPath = match[0];
+        const startX = match.index + 1; // x is 1-based in IBufferCellPosition
+        const endX = startX + matchedPath.length;
+
+        foundLinks.push({
+          range: {
+            start: { x: startX, y: bufferLineNumber },
+            end: { x: endX, y: bufferLineNumber },
+          },
+          text: matchedPath,
+          activate(_event: MouseEvent, _text: string) {
+            console.log('[TerminalTab] .md path clicked:', matchedPath);
+
+            // Validate: sessionId must exist
+            if (!sessionId) {
+              console.warn('[TerminalTab] No session ID, cannot validate path');
+              return;
+            }
+
+            // Set validation state
+            fileStore.setValidatingPath(matchedPath);
+
+            // Send validation request
+            fileWebSocket.validatePath(matchedPath, sessionId);
+          },
+        });
+      }
+
+      callback(foundLinks.length > 0 ? foundLinks : undefined);
+    },
+  });
 
   // Setup scroll tracking to detect user scroll
   setupScrollTracking();

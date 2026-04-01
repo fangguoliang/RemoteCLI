@@ -11,7 +11,6 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { Terminal } from 'xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { useAuthStore } from '../stores/auth';
 import { useSettingsStore } from '../stores/settings';
@@ -49,13 +48,41 @@ const COMMAND_SEND_DELAY = 100; // ms
 const COMMAND_START_DELAY = 100; // ms
 const TERMINAL_INIT_DELAY = 400; // ms - wait for terminal to initialize and receive output
 
-// Regex to detect .md file paths (absolute and relative)
-// Matches: Windows absolute (C:\path\file.md), relative (./file.md, ../file.md, dir/file.md), simple (file.md)
-// URL exclusion is handled in the link provider to avoid partial URL matches
-const mdPathRegex = /[A-Za-z]:[\\/][^\s]+\.md|\.{1,2}[\\/][^\s]+\.md|[^\s]+\.md/g;
-
 // Execution state for cancellation
 let shouldAbortExecution = false;
+
+// Handle .md path click
+function handleMdPathClick(matchedPath: string) {
+  console.log('[TerminalTab] handleMdPathClick:', matchedPath, 'sessionId:', sessionId);
+
+  // Validate: sessionId must exist
+  if (!sessionId) {
+    console.log('[TerminalTab] no sessionId, skipping');
+    return;
+  }
+
+  // Set validation state
+  fileStore.setValidatingPath(matchedPath);
+
+  // Ensure fileWebSocket is connected before sending
+  if (!fileWebSocket.isConnected()) {
+    const apiUrl = settingsStore.settings.apiUrl || '';
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = apiUrl
+      ? apiUrl.replace(/^http/, 'ws') + '/ws/browser'
+      : `${wsProtocol}//${window.location.host}/ws/browser`;
+
+    // Pass agentId to fileWebSocket.connect for proper routing
+    fileWebSocket.connect(wsUrl, props.tab.agentId).then(() => {
+      fileWebSocket.validatePath(matchedPath, sessionId!);
+    }).catch(err => {
+      console.error('[TerminalTab] Failed to connect fileWebSocket:', err);
+      fileStore.setValidatingPath(null);
+    });
+  } else {
+    fileWebSocket.validatePath(matchedPath, sessionId);
+  }
+}
 
 onMounted(() => {
   // Only initialize terminal if this tab is visible
@@ -214,69 +241,100 @@ function initTerminal() {
   fitAddon = new FitAddon();
   serializeAddon = new SerializeAddon();
   terminal.loadAddon(fitAddon);
-  terminal.loadAddon(new WebLinksAddon());
   terminal.loadAddon(serializeAddon);
   terminal.open(terminalRef.value);
 
   // Register link provider for .md file paths (xterm v5 API)
   terminal.registerLinkProvider({
     provideLinks(bufferLineNumber: number, callback: (links: any[] | undefined) => void) {
-      const buffer = terminal!.buffer.active;
-      const line = buffer.getLine(bufferLineNumber);
-      if (!line) {
+      try {
+        const buffer = terminal!.buffer.active;
+        const line = buffer.getLine(bufferLineNumber);
+        if (!line) {
+          callback(undefined);
+          return;
+        }
+
+        const lineText = line.translateToString(true);
+        if (!lineText) {
+          callback(undefined);
+          return;
+        }
+
+        // Match .md file paths (including Windows drive letters)
+        const mdRegex = /[a-zA-Z0-9_:\\\-./]+\.md/g;
+        const foundLinks: any[] = [];
+        let matchResult;
+
+        while ((matchResult = mdRegex.exec(lineText)) !== null) {
+          const matchedPath = matchResult[0];
+          const matchStart = matchResult.index;
+          const matchEnd = matchStart + matchedPath.length;
+
+          foundLinks.push({
+            range: {
+              start: { x: matchStart + 1, y: bufferLineNumber },
+              end: { x: matchEnd, y: bufferLineNumber },
+            },
+            text: matchedPath,
+            decorations: {
+              underline: true,
+              pointerCursor: true,
+            },
+            activate(_event: MouseEvent, _text: string) {
+              handleMdPathClick(matchedPath);
+            },
+          });
+        }
+
+        callback(foundLinks.length > 0 ? foundLinks : undefined);
+      } catch (err) {
         callback(undefined);
+      }
+    },
+  });
+
+  // Direct click detection on terminal (fallback for coordinate issues)
+  terminalRef.value?.addEventListener('click', (e: MouseEvent) => {
+    if (!terminal) return;
+
+    const rect = terminalRef.value?.getBoundingClientRect();
+    if (!rect) return;
+
+    // Get cell size
+    const cols = terminal.cols;
+    const rows = terminal.rows;
+    const cellWidth = rect.width / cols;
+    const cellHeight = rect.height / rows;
+
+    // Calculate click position in cells
+    const x = Math.floor((e.clientX - rect.left) / cellWidth);
+    const y = Math.floor((e.clientY - rect.top) / cellHeight);
+
+    // Get buffer line
+    const buffer = terminal.buffer.active;
+    const baseY = buffer.baseY;
+    const bufferLine = y + baseY;
+    const line = buffer.getLine(bufferLine);
+
+    if (!line) return;
+
+    const lineText = line.translateToString(true);
+
+    // Check if click is on a .md file (including Windows drive letters)
+    const mdRegex = /[a-zA-Z0-9_:\\\-./]+\.md/g;
+    let match;
+    while ((match = mdRegex.exec(lineText)) !== null) {
+      const matchedPath = match[0];
+      const matchStart = match.index;
+      const matchEnd = matchStart + matchedPath.length;
+
+      // Check if click is within this match (x is 0-based column)
+      if (x >= matchStart && x < matchEnd) {
+        handleMdPathClick(matchedPath);
         return;
       }
-
-      const lineText = line.translateToString(true);
-      const foundLinks: any[] = [];
-
-      // Find all .md paths in the line
-      let match;
-      const regex = new RegExp(mdPathRegex.source, 'g');
-      while ((match = regex.exec(lineText)) !== null) {
-        const matchedPath = match[0];
-        const matchStart = match.index;
-
-        // Skip matches that are part of URLs (preceded by ://)
-        // Check if this match is part of a URL by looking at characters before the match
-        if (matchStart >= 3 && lineText.substring(matchStart - 3, matchStart) === '://') {
-          continue;
-        }
-        // Also skip if the match looks like a URL fragment (e.g., "s://..." from "https://...")
-        if (/^[a-zA-Z]:[\\/]{2}/.test(matchedPath) && !/^[A-Za-z]:[\\/]/.test(matchedPath)) {
-          continue;
-        }
-
-        const startX = matchStart + 1; // x is 1-based in IBufferCellPosition
-        const endX = startX + matchedPath.length;
-
-        foundLinks.push({
-          range: {
-            start: { x: startX, y: bufferLineNumber },
-            end: { x: endX, y: bufferLineNumber },
-          },
-          text: matchedPath,
-          activate(_event: MouseEvent, _text: string) {
-            console.log('[TerminalTab] .md path clicked:', matchedPath);
-
-            // Validate: sessionId must exist
-            if (!sessionId) {
-              console.warn('[TerminalTab] No session ID, cannot validate path');
-              return;
-            }
-
-            // Set validation state
-            fileStore.setValidatingPath(matchedPath);
-
-            // Send validation request
-            fileWebSocket.validatePath(matchedPath, sessionId);
-          },
-        });
-      }
-
-      callback(foundLinks.length > 0 ? foundLinks : undefined);
-    },
+    }
   });
 
   // Setup scroll tracking to detect user scroll
@@ -292,11 +350,7 @@ function initTerminal() {
   // Restore scrollback from sessionStorage if exists
   const savedScrollback = sessionStorage.getItem(`scrollback:${props.tab.id}`);
   if (savedScrollback && terminal) {
-    const lineCount = savedScrollback.split('\n').length;
-    console.log(`[TerminalTab] Restoring scrollback for ${props.tab.id}: ${savedScrollback.length} chars, ~${lineCount} lines`);
     terminal.write(savedScrollback);
-  } else {
-    console.log(`[TerminalTab] No saved scrollback for ${props.tab.id}`);
   }
 
   // Start periodic scrollback save

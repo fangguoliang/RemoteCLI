@@ -235,6 +235,16 @@ class TunnelManager {
   getOnlineAgents(): string[] {
     return Array.from(this.agents.keys());
   }
+
+  // 获取浏览器连接数
+  getBrowserCount(): number {
+    return this.browsers.size;
+  }
+
+  // 获取 Agent 连接数
+  getAgentCount(): number {
+    return this.agents.size;
+  }
 }
 
 export const tunnelManager = new TunnelManager();

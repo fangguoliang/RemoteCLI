@@ -31,9 +31,26 @@ export const initDatabase = async () => {
     db = new SQL.Database();
   }
 
-  // 初始化表结构
+  // Check existing tables
+  const existingTables = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+  console.log('Existing tables before schema:', existingTables[0]?.values.map(v => v[0]).join(', ') || 'none');
+
+  // 初始化表结构 - split schema into individual statements and execute each
   const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf-8');
-  db.run(schema);
+  const statements = schema.split(';').filter(s => s.trim().length > 0);
+  for (const statement of statements) {
+    try {
+      db.run(statement.trim());
+    } catch (err) {
+      // Log but don't fail - some statements might fail if tables already exist
+      console.log(`Schema statement warning: ${err}`);
+    }
+  }
+  saveDatabase();
+
+  // Check tables after schema
+  const tablesAfter = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+  console.log('Tables after schema:', tablesAfter[0]?.values.map(v => v[0]).join(', ') || 'none');
 
   // 创建默认 admin 用户（如果不存在）
   const adminUser = userModel.findByUsername('admin');

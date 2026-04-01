@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="markdown-viewer-overlay" @touchstart="handleTouchStart" @touchend="handleTouchEnd">
+    <div v-if="visible" class="markdown-viewer-overlay">
       <!-- Header -->
       <div class="viewer-header">
         <button class="back-btn" @click="handleClose">←</button>
@@ -11,15 +11,22 @@
       </div>
 
       <!-- Content -->
-      <div class="viewer-content">
+      <div class="viewer-content" @touchstart="handleTouchStart" @touchend="handleTouchEnd">
         <div v-if="loading" class="loading-overlay">
           <div class="spinner"></div>
         </div>
+        <!-- 预览模式 -->
+        <MdPreview
+          v-else-if="!isEditMode"
+          :modelValue="content"
+          theme="dark"
+          style="height: 100%; overflow: auto;"
+        />
+        <!-- 编辑模式 -->
         <MdEditor
           v-else
           v-model="content"
           theme="dark"
-          :previewOnly="!isEditMode"
           style="height: 100%"
         />
       </div>
@@ -40,7 +47,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue';
-import { MdEditor } from 'md-editor-v3';
+import { MdEditor, MdPreview } from 'md-editor-v3';
 import 'md-editor-v3/lib/style.css';
 import { useFileStore } from '@/stores/file';
 import { fileWebSocket } from '@/services/fileWebSocket';

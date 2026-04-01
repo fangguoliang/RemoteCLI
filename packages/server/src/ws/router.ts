@@ -111,10 +111,12 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
 
     case 'file:validate':
       // Browser requests path validation
-      // Note: Requires sessionId for working directory resolution
+      console.log(`[file] file:validate received, sessionId: ${sessionId}, payload:`, payload);
       if (sessionId) {
         const browser = tunnelManager.getBrowser(ws);
+        console.log(`[file] browser for validate:`, browser ? { agentId: browser.agentId, userId: browser.userId } : null);
         if (browser?.agentId) {
+          console.log(`[file] routing file:validate to agent:`, browser.agentId);
           tunnelManager.routeToAgent(browser.agentId, message);
         } else {
           ws.send(JSON.stringify({
@@ -150,8 +152,20 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
 
     case 'file:validated':
       // Agent returns validation result to specific browser session
-      if (isAgent && sessionId) {
-        tunnelManager.routeToBrowser(sessionId, message);
+      console.log(`[file] file:validated received, isAgent: ${isAgent}, sessionId: ${sessionId}`);
+      if (isAgent) {
+        const agentId = tunnelManager.getAgentIdByWs(ws);
+        console.log(`[file] file:validated agentId:`, agentId);
+        // Route to all browsers connected to this agent (including fileWebSocket)
+        if (agentId) {
+          console.log(`[file] routing file:validated to browsers via agentBrowsers`);
+          tunnelManager.routeFileMessageToBrowsers(agentId, message);
+        }
+        // Also try to route via session for terminal WebSocket
+        if (sessionId) {
+          console.log(`[file] routing file:validated to browser via sessionId: ${sessionId}`);
+          tunnelManager.routeToBrowser(sessionId, message);
+        }
       }
       break;
 
@@ -160,7 +174,7 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
       break;
 
     default:
-      console.log(`Unknown message type: ${type}`);
+      break;
   }
 }
 

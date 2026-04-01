@@ -9,23 +9,23 @@ class FileWebSocketService {
   private messageHandlers = new Map<string, MessageHandler[]>();
   private transferChunks = new Map<string, { chunks: Map<number, string>; totalChunks: number; totalSize: number }>();
   private viewingPath: string | null = null;
+  private currentAgentId: string | null = null;
 
-  connect(url: string): Promise<void> {
+  connect(url: string, agentId?: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      console.log('[fileWebSocket] Connecting to:', url);
+      console.log('[fileWebSocket] Connecting to:', url, 'agentId:', agentId);
+      this.currentAgentId = agentId || null;
       this.ws = new WebSocket(url);
 
       this.ws.onopen = () => {
         console.log('[fileWebSocket] WebSocket opened');
-        // 发送认证 - 使用 userId 而不是 token
         const authStore = useAuthStore();
-        console.log('[fileWebSocket] Sending auth with userId:', authStore.userId);
+        console.log('[fileWebSocket] Sending auth with userId:', authStore.userId, 'agentId:', this.currentAgentId);
         this.send({
           type: 'auth',
-          payload: { userId: authStore.userId },
+          payload: { userId: authStore.userId, agentId: this.currentAgentId },
           timestamp: Date.now(),
         });
-        // Don't resolve yet - wait for auth:result
       };
 
       this.ws.onerror = (err) => {
@@ -36,7 +36,7 @@ class FileWebSocketService {
       this.ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          console.log('[fileWebSocket] Received message:', message.type);
+          console.log('[fileWebSocket] Received message:', message.type, message);
           // Handle auth:result
           if (message.type === 'auth:result') {
             console.log('[fileWebSocket] Auth result:', message.payload);
@@ -357,7 +357,6 @@ class FileWebSocketService {
       // File not found - show error
       store.setValidatingPath(null);
       store.setViewerLoading(false);
-      // Error will be shown by component
     }
   }
 
@@ -373,7 +372,6 @@ class FileWebSocketService {
       payload: { path, agentId },
       timestamp: Date.now(),
     });
-    console.log('[fileWebSocket] file:browse sent');
   }
 
   download(path: string) {
@@ -447,13 +445,19 @@ class FileWebSocketService {
   }
 
   validatePath(path: string, sessionId: string) {
-    console.log('[fileWebSocket] validatePath:', path, 'sessionId:', sessionId);
+    console.log('[fileWebSocket] validatePath:', path, 'sessionId:', sessionId, 'ws state:', this.ws?.readyState);
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn('[fileWebSocket] validatePath: WebSocket not open');
+      return;
+    }
+
     this.send({
       type: 'file:validate',
       payload: { path },
       sessionId,
       timestamp: Date.now(),
     });
+    console.log('[fileWebSocket] file:validate sent');
   }
 
   downloadForView(path: string) {

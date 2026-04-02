@@ -103,36 +103,49 @@ Click close button → viewer closes → iframe destroyed → resources released
 
 ```typescript
 interface HttpRequestPayload {
-  sessionId: string;      // Terminal session ID for routing
   requestId: string;      // Unique request ID for response matching
   url: string;            // Target URL (e.g., http://localhost:3000/api/data)
   method: string;         // HTTP method (GET, POST, PUT, DELETE)
-  headers?: Record<string, string>;  // Request headers
+  headers?: Record<string, string | string[]>;  // Request headers (supports multi-value)
   body?: string;          // Request body (base64 encoded, for POST/PUT)
 }
+// Note: sessionId is at the Message level, not in payload (avoids duplication)
 ```
 
 #### http:response (Agent → Server)
 
 ```typescript
 interface HttpResponsePayload {
-  sessionId: string;      // Session ID
   requestId: string;      // Request ID for matching
   status: number;         // HTTP status code (200, 404, 500, etc.)
-  headers: Record<string, string>;  // Response headers
+  headers: Record<string, string | string[]>;  // Response headers (supports multi-value like Set-Cookie)
   body: string;           // Response body (base64 encoded)
   error?: string;         // Error message if request failed
 }
+// Note: sessionId is at the Message level, not in payload (avoids duplication)
 ```
 
 ### Proxy URL Format
 
+**Note**: The original URL is URL-encoded to avoid parsing issues with embedded `://` characters.
+
 ```
-http://server:8080/proxy/{sessionId}/{originalUrl}
+http://server:8080/proxy/{sessionId}/{encodedUrl}
 
 Example:
 Original URL: http://localhost:3000/api/users
-Proxy URL: http://server:8080/proxy/sess-123/http://localhost:3000/api/users
+Encoded URL: http%3A%2F%2Flocalhost%3A3000%2Fapi%2Fusers
+Proxy URL: http://server:8080/proxy/sess-123/http%3A%2F%2Flocalhost%3A3000%2Fapi%2Fusers
+```
+
+**Implementation**:
+```typescript
+// Encode the original URL before constructing proxy URL
+const encodedUrl = encodeURIComponent(originalUrl);
+const proxyUrl = `http://${serverHost}:${proxyPort}/proxy/${sessionId}/${encodedUrl}`;
+
+// Decode in proxy handler
+const targetUrl = decodeURIComponent(request.params['*']);
 ```
 
 ### URL Detection Regex
@@ -243,6 +256,12 @@ const iframeStyle = computed(() => {
 
 ### Fullscreen Mode Control
 
+**Browser Restrictions Note**:
+- Fullscreen API requires user gesture (click/touch) - cannot be activated programmatically on page load
+- iOS Safari has limited fullscreen support - may fall back to just maximizing viewport size
+- Screen orientation lock may not work on all browsers - user may need to manually rotate device
+- If fullscreen fails, the viewer will still work in normal mode with viewport scaling
+
 ```typescript
 // Enter landscape fullscreen mode
 async function enterFullscreenLandscape() {
@@ -331,13 +350,16 @@ const pendingRequests = new Map<string, {
   timeout: NodeJS.Timeout;
 }>();
 
-// Handle all proxy requests
-proxyApp.all('/proxy/:sessionId/*', async (request, reply) => {
+// Handle all proxy requests - URL is encoded in path
+proxyApp.all('/proxy/:sessionId/:encodedUrl', async (request, reply) => {
   const sessionId = request.params.sessionId;
-  const targetPath = request.params['*'];  // Original URL path
+  const encodedUrl = request.params.encodedUrl;
 
-  // Find corresponding Agent
-  const agentWs = tunnelManager.getAgentForSession(sessionId);
+  // Decode the target URL
+  const targetUrl = decodeURIComponent(encodedUrl);
+
+  // Find corresponding Agent via TunnelManager
+  const agentWs = tunnelManager.getAgentWebSocketForSession(sessionId);
   if (!agentWs) {
     reply.code(502).send({ error: 'Agent not connected' });
     return;
@@ -346,17 +368,24 @@ proxyApp.all('/proxy/:sessionId/*', async (request, reply) => {
   // Generate request ID
   const requestId = crypto.randomUUID();
 
-  // Construct request message
+  // Convert headers to array format for multi-value support
+  const headers: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(request.headers)) {
+    if (value !== undefined) {
+      headers[key] = value;
+    }
+  }
+
+  // Construct request message (sessionId at message level, not payload)
   const httpRequest: Message = {
     type: 'http:request',
-    sessionId,
+    sessionId,  // At message level for routing
     payload: {
-      sessionId,
       requestId,
-      url: targetPath,
+      url: targetUrl,
       method: request.method,
-      headers: request.headers as Record<string, string>,
-      body: request.body ? btoa(request.body) : undefined,
+      headers,
+      body: request.body ? Buffer.from(request.body as string).toString('base64') : undefined,
     },
     timestamp: Date.now(),
   };
@@ -379,9 +408,19 @@ proxyApp.all('/proxy/:sessionId/*', async (request, reply) => {
   // Wait for response
   try {
     const response = await responsePromise;
+
+    // Convert headers back to flat format for HTTP response
+    const flatHeaders: Record<string, string> = {};
+    for (const [key, value] of Object.entries(response.headers)) {
+      flatHeaders[key] = Array.isArray(value) ? value.join(', ') : value;
+    }
+
     reply.code(response.status);
-    reply.headers(response.headers);
-    reply.send(atob(response.body));
+    reply.headers(flatHeaders);
+
+    // Handle binary response properly
+    const bodyBuffer = Buffer.from(response.body, 'base64');
+    reply.send(bodyBuffer);
   } catch (err) {
     reply.code(502).send({ error: err.message });
   }
@@ -403,6 +442,16 @@ export function handleHttpResponse(message: Message) {
     }
   }
 }
+
+// TunnelManager needs new method - add to packages/server/src/ws/tunnel.ts
+export function getAgentWebSocketForSession(sessionId: string): WebSocket | null {
+  // Find agentId for this session
+  const agentId = this.sessionAgents.get(sessionId);
+  if (!agentId) return null;
+
+  // Find agent WebSocket
+  return this.agents.get(agentId)?.ws || null;
+}
 ```
 
 ## Agent HTTP Request Execution
@@ -417,10 +466,17 @@ import { WebSocket } from 'ws';
 
 export async function handleHttpRequest(ws: WebSocket, message: Message) {
   const payload = message.payload as HttpRequestPayload;
-  const { sessionId, requestId, url, method, headers, body } = payload;
+  const sessionId = message.sessionId;  // Get from message level, not payload
+  const { requestId, url, method, headers, body } = payload;
 
   // Parse target URL (usually localhost)
   const targetUrl = new URL(url);
+
+  // Convert headers to flat format for http.request
+  const flatHeaders: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers || {})) {
+    flatHeaders[key] = Array.isArray(value) ? value[0] : value;
+  }
 
   try {
     // Execute HTTP request
@@ -429,19 +485,24 @@ export async function handleHttpRequest(ws: WebSocket, message: Message) {
       port: parseInt(targetUrl.port) || 80,
       path: targetUrl.pathname + targetUrl.search,
       method,
-      headers: headers || {},
+      headers: flatHeaders,
       body: body ? Buffer.from(body, 'base64') : undefined,
     });
 
-    // Construct response message
+    // Convert response headers to array format for multi-value support
+    const responseHeaders: Record<string, string | string[]> = {};
+    for (const [key, value] of Object.entries(response.headers)) {
+      responseHeaders[key] = value;
+    }
+
+    // Construct response message (sessionId at message level)
     const httpResponse: Message = {
       type: 'http:response',
       sessionId,
       payload: {
-        sessionId,
         requestId,
         status: response.status,
-        headers: response.headers,
+        headers: responseHeaders,
         body: response.body.toString('base64'),
       },
       timestamp: Date.now(),
@@ -454,7 +515,6 @@ export async function handleHttpRequest(ws: WebSocket, message: Message) {
       type: 'http:response',
       sessionId,
       payload: {
-        sessionId,
         requestId,
         status: 502,
         headers: {},
@@ -476,7 +536,7 @@ async function executeHttpRequest(options: {
   method: string;
   headers: Record<string, string>;
   body?: Buffer;
-}): Promise<{ status: number; headers: Record<string, string>; body: Buffer }> {
+}): Promise<{ status: number; headers: Record<string, string | string[]>; body: Buffer }> {
   return new Promise((resolve, reject) => {
     const req = http.request(options, (res) => {
       const chunks: Buffer[] = [];
@@ -485,7 +545,7 @@ async function executeHttpRequest(options: {
       res.on('end', () => {
         resolve({
           status: res.statusCode || 200,
-          headers: res.headers as Record<string, string>,
+          headers: res.headers as Record<string, string | string[]>,
           body: Buffer.concat(chunks),
         });
       });
@@ -559,59 +619,101 @@ terminal.registerLinkProvider({
 // URL click handler
 function handleLocalhostUrlClick(url: string) {
   if (!sessionId) {
-    console.warn('No session ID, cannot open URL');
+    // Show user-facing error instead of silent console.warn
+    showToast('请先连接终端会话');
     return;
   }
 
   // Set WebViewer state
-  const fileStore = useFileStore();
-  fileStore.setWebViewerUrl(url);
-  fileStore.setWebViewerSessionId(sessionId);
-  fileStore.setWebViewerVisible(true);
+  const webViewerStore = useWebViewerStore();
+  webViewerStore.setUrl(url);
+  webViewerStore.setSessionId(sessionId);
+  webViewerStore.setVisible(true);
 }
 ```
 
-### File Store Extensions
+### WebViewer Store (New Dedicated Store)
+
+**Note**: Creating a dedicated store instead of extending file.ts to maintain semantic separation.
 
 ```typescript
-// packages/web/src/stores/file.ts
+// packages/web/src/stores/webViewer.ts
 
-// New WebViewer related state
-const webViewerUrl = ref<string | null>(null);       // Target URL
-const webViewerSessionId = ref<string | null>(null); // Session ID (for proxy routing)
-const webViewerState = ref<'closed' | 'fullscreen' | 'minimized'>('closed');
-const webViewerViewport = ref<'mobile' | 'tablet' | 'desktop'>('mobile');
+import { defineStore } from 'pinia';
+import { ref, computed } from 'vue';
+import { useSettingsStore } from './settings';
 
-// Proxy URL calculation
-const webViewerProxyUrl = computed(() => {
-  if (!webViewerUrl.value || !webViewerSessionId.value) return null;
+export const useWebViewerStore = defineStore('webViewer', () => {
+  // State
+  const url = ref<string | null>(null);       // Target URL
+  const sessionId = ref<string | null>(null); // Session ID (for proxy routing)
+  const state = ref<'closed' | 'fullscreen' | 'minimized'>('closed');
+  const viewport = ref<'mobile' | 'tablet' | 'desktop'>('mobile');
 
-  // Construct proxy URL
-  const serverHost = config.serverHost;  // Server address
-  const proxyPort = config.proxyPort;    // HTTP proxy port (8080)
+  // Get server host from settings (derive from apiUrl)
+  const settings = useSettingsStore();
 
-  return `http://${serverHost}:${proxyPort}/proxy/${webViewerSessionId.value}/${webViewerUrl.value}`;
+  const serverHost = computed(() => {
+    // Derive host from apiUrl: "https://server.com/api" -> "server.com"
+    const apiUrl = settings.apiUrl || '';
+    const match = apiUrl.match(/^https?:\/\/([^:/]+)/);
+    return match ? match[1] : 'localhost';
+  });
+
+  const proxyPort = 8080;  // Fixed proxy port
+
+  // Proxy URL calculation (URL-encoded)
+  const proxyUrl = computed(() => {
+    if (!url.value || !sessionId.value) return null;
+
+    // Encode the URL to avoid parsing issues
+    const encodedUrl = encodeURIComponent(url.value);
+
+    return `http://${serverHost.value}:${proxyPort}/proxy/${sessionId.value}/${encodedUrl}`;
+  });
+
+  // Methods
+  function setUrl(targetUrl: string | null) {
+    url.value = targetUrl;
+  }
+
+  function setSessionId(sid: string | null) {
+    sessionId.value = sid;
+  }
+
+  function setVisible(visible: boolean) {
+    state.value = visible ? 'fullscreen' : 'closed';
+  }
+
+  function setMinimized() {
+    state.value = 'minimized';
+  }
+
+  function setViewport(v: 'mobile' | 'tablet' | 'desktop') {
+    viewport.value = v;
+  }
+
+  function clear() {
+    url.value = null;
+    sessionId.value = null;
+    state.value = 'closed';
+    viewport.value = 'mobile';
+  }
+
+  return {
+    url,
+    sessionId,
+    state,
+    viewport,
+    proxyUrl,
+    setUrl,
+    setSessionId,
+    setVisible,
+    setMinimized,
+    setViewport,
+    clear,
+  };
 });
-
-// New methods
-function setWebViewerUrl(url: string | null) {
-  webViewerUrl.value = url;
-}
-
-function setWebViewerSessionId(sid: string | null) {
-  webViewerSessionId.value = sid;
-}
-
-function setWebViewerVisible(visible: boolean) {
-  webViewerState.value = visible ? 'fullscreen' : 'closed';
-}
-
-function clearWebViewer() {
-  webViewerUrl.value = null;
-  webViewerSessionId.value = null;
-  webViewerState.value = 'closed';
-  webViewerViewport.value = 'mobile';
-}
 ```
 
 ## Error Handling
@@ -645,35 +747,46 @@ function clearWebViewer() {
 
 | Package | File | Action | Description |
 |---------|------|--------|-------------|
-| shared | `src/types.ts` | Modify | Add `http:request`, `http:response` message types and `HttpRequestPayload`, `HttpResponsePayload` interfaces |
+| shared | `src/types.ts` | Modify | Add `http:request`, `http:response` to MessageType enum; add `HttpRequestPayload`, `HttpResponsePayload` interfaces |
 | server | `src/proxy/httpProxy.ts` | Create | HTTP proxy service (port 8080), receives iframe requests and forwards to Agent |
+| server | `src/ws/tunnel.ts` | Modify | Add `getAgentWebSocketForSession()` method for proxy routing |
 | server | `src/ws/router.ts` | Modify | Add `http:request`, `http:response` message routing |
 | server | `src/index.ts` | Modify | Start HTTP proxy service |
 | agent | `src/httpHandler.ts` | Create | HTTP request execution module, executes localhost HTTP requests |
 | agent | `src/tunnel.ts` | Modify | Add `http:request` message handling |
 | web | `src/components/WebViewer.vue` | Create | Website preview component (landscape/portrait layouts, minimize, viewport switch) |
-| web | `src/components/TerminalTab.vue` | Modify | Add localhost URL LinkProvider detection |
-| web | `src/stores/file.ts` | Modify | Add `webViewerUrl`, `webViewerSessionId`, `webViewerState` state |
-| web | `src/config.ts` | Create (if not exists) | Add `proxyPort` config |
+| web | `src/components/TerminalTab.vue` | Modify | Add localhost URL LinkProvider detection and click handler |
+| web | `src/stores/webViewer.ts` | Create | Dedicated WebViewer state store (separate from file.ts for semantic clarity) |
 
 ## Implementation Order
 
-1. **shared/types.ts** - Add `http:request`, `http:response` message types and payload interfaces
-2. **server/src/proxy/httpProxy.ts** - Create HTTP proxy service
-3. **server/src/ws/router.ts** - Add message routing switch cases
-4. **server/src/index.ts** - Start HTTP proxy service
-5. **agent/src/httpHandler.ts** - Create HTTP request execution module
-6. **agent/src/tunnel.ts** - Add http:request message handling
-7. **web/src/config.ts** - Add proxyPort config
-8. **web/src/stores/file.ts** - Add WebViewer state and methods
+1. **shared/types.ts** - Add `http:request`, `http:response` to MessageType enum; add payload interfaces
+2. **server/src/ws/tunnel.ts** - Add `getAgentWebSocketForSession()` method
+3. **server/src/proxy/httpProxy.ts** - Create HTTP proxy service
+4. **server/src/ws/router.ts** - Add message routing switch cases
+5. **server/src/index.ts** - Start HTTP proxy service
+6. **agent/src/httpHandler.ts** - Create HTTP request execution module
+7. **agent/src/tunnel.ts** - Add http:request message handling
+8. **web/src/stores/webViewer.ts** - Create dedicated WebViewer store
 9. **web/src/components/WebViewer.vue** - Create component
 10. **web/src/components/TerminalTab.vue** - Add URL LinkProvider and integration
+
+## Known Limitations
+
+1. **WebSocket inside iframe**: Many modern dev servers use WebSocket for HMR (Hot Module Replacement), live reload, and real-time features. These WebSocket connections cannot be proxied through the HTTP proxy. This is a known limitation - pages with WebSocket features may not work correctly.
+
+2. **HTTPS localhost**: Only HTTP localhost URLs are supported. HTTPS localhost URLs (common with some frameworks) require certificate handling which is not implemented.
+
+3. **Relative URLs in iframe**: If a user clicks a relative link inside the iframe, navigation may not work correctly. Only the initial URL is proxied.
+
+4. **iOS Safari fullscreen**: Fullscreen API has limited support on iOS Safari. Landscape mode will work but may not fully hide browser UI.
+
+5. **Binary file downloads**: Large binary files (images, videos) may have performance issues due to base64 encoding overhead.
 
 ## Out of Scope
 
 - Remote server URLs (not localhost)
-- HTTPS proxy (only HTTP for now)
-- WebSocket connections inside iframe
 - Multiple concurrent viewers
 - Bookmark/favorite URLs
 - URL history
+- Authentication/authorization on proxy endpoint (assumes internal service behind auth wall)

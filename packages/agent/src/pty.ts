@@ -14,6 +14,7 @@ export class PtyManager {
   private sessions = new Map<string, PtySession>();
   private sessionTimeouts = new Map<string, NodeJS.Timeout>();
   private sessionBuffers = new Map<string, string[]>();
+  private promptBuffers = new Map<string, string>();  // Buffer for prompt parsing
   private TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
   create(sessionId: string, cols: number = 80, rows: number = 24, onData: (data: string) => void): PtySession {
@@ -43,9 +44,19 @@ export class PtyManager {
 
     ptyProcess.onData((data) => {
       // Update working directory from PowerShell prompt
-      const newDir = this.parsePromptForDirectory(data);
+      // Buffer data to handle prompts that span multiple callbacks
+      let promptBuffer = this.promptBuffers.get(sessionId) || '';
+      promptBuffer += data;
+
+      // Try to match prompt in the buffer
+      const newDir = this.parsePromptForDirectory(promptBuffer);
       if (newDir) {
         session.workingDirectory = newDir;
+        // Clear buffer after successful match (keep last 500 chars for partial matches)
+        this.promptBuffers.set(sessionId, promptBuffer.slice(-500));
+      } else {
+        // Keep buffer for next callback (but limit size)
+        this.promptBuffers.set(sessionId, promptBuffer.slice(-1000));
       }
 
       if (session.onDataCallback) {
@@ -166,8 +177,9 @@ export class PtyManager {
       this.sessionTimeouts.delete(sessionId);
     }
 
-    // Clear buffer
+    // Clear buffers
     this.sessionBuffers.delete(sessionId);
+    this.promptBuffers.delete(sessionId);
 
     // Remove session
     this.sessions.delete(sessionId);
@@ -179,11 +191,23 @@ export class PtyManager {
 
   // Parse PowerShell prompt to extract current working directory
   private parsePromptForDirectory(data: string): string | null {
+    // Strip ANSI escape codes first (PowerShell prompts often have colors)
+    const cleanData = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+
     // PowerShell prompt format: "PS D:\project> " or "PS C:\Users\admin> "
-    const promptMatch = data.match(/PS\s+([A-Za-z]:[^\r\n>]+)>/);
+    // Also handle paths with spaces: "PS D:\my project\folder> "
+    const promptMatch = cleanData.match(/PS\s+([A-Za-z]:[^\r\n>]+)>/);
     if (promptMatch) {
-      return promptMatch[1].trim();
+      const dir = promptMatch[1].trim();
+      console.log(`[PtyManager] Parsed working directory from prompt: ${dir}`);
+      return dir;
     }
+
+    // Debug: log when we receive data but can't parse prompt
+    if (cleanData.includes('PS ') && cleanData.includes('>')) {
+      console.log(`[PtyManager] Prompt detected but not matched, data snippet: ${cleanData.substring(0, 100)}`);
+    }
+
     return null;
   }
 }

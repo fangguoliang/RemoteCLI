@@ -224,6 +224,8 @@ function handleAgentRegister(ws: WebSocket, payload: any) {
 function handleBrowserAuth(ws: WebSocket, payload: any) {
   const { userId, agentId } = payload;
 
+  console.log(`[auth] Browser auth request: userId=${userId}, agentId=${agentId}`);
+
   if (!userId) {
     ws.send(JSON.stringify({
       type: 'auth:result',
@@ -237,7 +239,9 @@ function handleBrowserAuth(ws: WebSocket, payload: any) {
 
   // 如果指定了 agentId，绑定到该 agent
   if (agentId) {
+    console.log(`[auth] Attempting to bind browser to agent: ${agentId}`);
     const bound = tunnelManager.bindBrowserToAgent(ws, agentId);
+    console.log(`[auth] Bind result: ${bound}`);
     if (!bound) {
       ws.send(JSON.stringify({
         type: 'auth:result',
@@ -247,6 +251,10 @@ function handleBrowserAuth(ws: WebSocket, payload: any) {
       return;
     }
   }
+
+  // Log the browser state after auth
+  const browser = tunnelManager.getBrowser(ws);
+  console.log(`[auth] Browser after auth: agentId=${browser?.agentId}`);
 
   ws.send(JSON.stringify({
     type: 'auth:result',

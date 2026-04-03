@@ -13,12 +13,14 @@ class FileWebSocketService {
 
   connect(url: string, agentId?: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      console.log('[fileWebSocket] Connecting to:', url, 'agentId:', agentId);
+      console.log('[fileWebSocket] Connecting to URL:', url, 'agentId:', agentId);
       this.currentAgentId = agentId || null;
-      this.ws = new WebSocket(url);
+      const ws = new WebSocket(url);
+      this.ws = ws;
+      console.log('[fileWebSocket] WebSocket created, readyState:', ws.readyState);
 
-      this.ws.onopen = () => {
-        console.log('[fileWebSocket] WebSocket opened');
+      ws.onopen = () => {
+        console.log('[fileWebSocket] WebSocket OPENED, readyState:', ws.readyState);
         const authStore = useAuthStore();
         console.log('[fileWebSocket] Sending auth with userId:', authStore.userId, 'agentId:', this.currentAgentId);
         this.send({
@@ -55,6 +57,8 @@ class FileWebSocketService {
 
       this.ws.onclose = () => {
         console.log('[fileWebSocket] WebSocket closed');
+        // Clean up connection state
+        this.ws = null;
         // Clean up viewing state
         this.viewingPath = null;
         // Clean up viewer-specific chunks
@@ -134,8 +138,14 @@ class FileWebSocketService {
   private handleFileData(payload: FileDataPayload) {
     const store = useFileStore();
 
+    // Normalize paths for comparison (handle both \ and /)
+    const normalizedViewingPath = this.viewingPath?.replace(/\\/g, '/');
+    const normalizedPayloadPath = payload.path.replace(/\\/g, '/');
+
+    console.log('[fileWebSocket] handleFileData: payload.path=', payload.path, 'viewingPath=', this.viewingPath);
+
     // Check if this is a "for viewing" download
-    if (this.viewingPath === payload.path) {
+    if (normalizedViewingPath && normalizedViewingPath === normalizedPayloadPath) {
       this.assembleViewContent(payload);
       return;
     }
@@ -444,20 +454,36 @@ class FileWebSocketService {
     reader.readAsArrayBuffer(file);
   }
 
+  // Check actual connection state before validating
+  private isActuallyConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
   validatePath(path: string, sessionId: string) {
     console.log('[fileWebSocket] validatePath:', path, 'sessionId:', sessionId, 'ws state:', this.ws?.readyState);
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn('[fileWebSocket] validatePath: WebSocket not open');
+
+    // Always check actual state
+    if (!this.isActuallyConnected()) {
+      console.warn('[fileWebSocket] validatePath: WebSocket not actually connected, state:', this.ws?.readyState);
+      // Clear stale connection
+      this.ws = null;
       return;
     }
 
-    this.send({
+    const msg = {
       type: 'file:validate',
       payload: { path },
       sessionId,
       timestamp: Date.now(),
-    });
-    console.log('[fileWebSocket] file:validate sent');
+    };
+    const msgStr = JSON.stringify(msg);
+    console.log('[fileWebSocket] Sending message:', msgStr.substring(0, 200));
+
+    // Actually send
+    if (this.ws) {
+      this.ws.send(msgStr);
+      console.log('[fileWebSocket] Message sent successfully');
+    }
   }
 
   downloadForView(path: string) {
@@ -483,7 +509,11 @@ class FileWebSocketService {
   }
 
   public isConnected(): boolean {
-    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+    return this.isActuallyConnected();
+  }
+
+  public getWsState(): number | null {
+    return this.ws?.readyState ?? null;
   }
 
   on(type: string, handler: MessageHandler) {

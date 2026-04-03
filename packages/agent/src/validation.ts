@@ -13,6 +13,8 @@ export function validateFilePath(
 
   // Get working directory from PtyManager
   const cwd = ptyManager.getWorkingDirectory(sessionId);
+  console.log(`[validation] validateFilePath: inputPath=${inputPath}, sessionId=${sessionId}, cwd=${cwd}`);
+
   if (!cwd) {
     return {
       originalPath: inputPath,
@@ -27,6 +29,7 @@ export function validateFilePath(
   if (!inputPath.match(/^[A-Za-z]:/)) {
     // Relative path - resolve against cwd
     resolvedPath = path.resolve(cwd, inputPath);
+    console.log(`[validation] Resolved relative path: ${inputPath} -> ${resolvedPath}`);
   }
 
   // Check existence
@@ -36,6 +39,8 @@ export function validateFilePath(
   } catch {
     exists = false;
   }
+
+  console.log(`[validation] Final result: resolvedPath=${resolvedPath}, exists=${exists}`);
 
   return {
     originalPath: inputPath,

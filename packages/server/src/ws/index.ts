@@ -10,16 +10,20 @@ export function setupWebSocket(fastify: FastifyInstance) {
   // 处理升级请求
   fastify.server.on('upgrade', (request, socket, head) => {
     const url = request.url || '';
+    console.log(`[WS] Upgrade request received for URL: ${url}`);
 
     if (url.startsWith('/ws/browser')) {
+      console.log(`[WS] Upgrading to browser WebSocket`);
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
       });
     } else if (url.startsWith('/ws/agent')) {
+      console.log(`[WS] Upgrading to agent WebSocket`);
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
       });
     } else {
+      console.log(`[WS] Unknown URL, destroying connection`);
       socket.destroy();
     }
   });
@@ -30,10 +34,15 @@ export function setupWebSocket(fastify: FastifyInstance) {
 
     console.log(`WebSocket connected: ${isAgent ? 'agent' : 'browser'}, url: ${url}`);
 
+    if (!isAgent) {
+      // Log browser connection details
+      console.log(`[WS] Browser WebSocket connected from url: ${url}`);
+    }
+
     ws.on('message', (data) => {
       try {
         const message = JSON.parse(data.toString());
-        console.log(`[WS] Received message type: ${message.type}`);
+        console.log(`[WS] Received message type: ${message.type} from ${isAgent ? 'agent' : 'browser'}`);
         handleMessage(ws, message, isAgent);
       } catch (err) {
         console.error('Failed to parse message:', err);

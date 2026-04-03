@@ -51,6 +51,49 @@ const TERMINAL_INIT_DELAY = 400; // ms - wait for terminal to initialize and rec
 // Execution state for cancellation
 let shouldAbortExecution = false;
 
+// Parse current working directory from terminal buffer
+// Handles standard PowerShell prompt "PS D:\path>" and Starship prompt "D:\path ❯"
+function parseCwdFromBuffer(): string | null {
+  if (!terminal) return null;
+
+  const buffer = terminal.buffer.active;
+  const bufferLength = buffer.length;
+
+  // Look back up to 20 lines from the bottom
+  for (let i = bufferLength - 1; i >= Math.max(0, bufferLength - 20); i--) {
+    const line = buffer.getLine(i);
+    if (!line) continue;
+
+    const lineText = line.translateToString(true);
+
+    // Try to match standard PowerShell prompt: "PS D:\path>" or "PS C:\Users\admin>"
+    const psMatch = lineText.match(/PS\s+([A-Za-z]:[^\r\n>]+)>/);
+    if (psMatch) {
+      console.log('[TerminalTab] Found PowerShell prompt CWD:', psMatch[1].trim());
+      return psMatch[1].trim();
+    }
+
+    // Try to match Starship-style prompt: path before "❯" symbol
+    // Format: "D:\path ❯" or "D:\path on branch ❯"
+    const starshipMatch = lineText.match(/([A-Za-z]:[^\r\n❯]+?)\s*(?:on\s+\w+\s*)?❯/);
+    if (starshipMatch) {
+      const cwd = starshipMatch[1].trim();
+      console.log('[TerminalTab] Found Starship prompt CWD:', cwd);
+      return cwd;
+    }
+
+    // Also try: just a path followed by prompt symbols
+    const pathMatch = lineText.match(/^([A-Za-z]:[\\\/][^\r\n]+?)\s*[❯>$]/);
+    if (pathMatch) {
+      console.log('[TerminalTab] Found path prompt CWD:', pathMatch[1].trim());
+      return pathMatch[1].trim();
+    }
+  }
+
+  console.log('[TerminalTab] Could not parse CWD from buffer');
+  return null;
+}
+
 // Handle .md path click
 function handleMdPathClick(matchedPath: string) {
   console.log('[TerminalTab] handleMdPathClick:', matchedPath, 'sessionId:', sessionId);
@@ -61,26 +104,55 @@ function handleMdPathClick(matchedPath: string) {
     return;
   }
 
+  // Parse CWD from terminal buffer for relative paths
+  let pathToSend = matchedPath;
+  const isAbsolutePath = /^[A-Za-z]:/.test(matchedPath) || /^[.\/]/.test(matchedPath);
+
+  if (!isAbsolutePath) {
+    const cwd = parseCwdFromBuffer();
+    if (cwd) {
+      // Build absolute path from relative path and CWD
+      // Handle both \ and / path separators
+      const normalizedCwd = cwd.replace(/\//g, '\\');
+      const normalizedPath = matchedPath.replace(/\//g, '\\');
+
+      // Simple concatenation - if cwd ends with \ and path doesn't start with \
+      if (normalizedCwd.endsWith('\\') && !normalizedPath.startsWith('\\')) {
+        pathToSend = normalizedCwd + normalizedPath;
+      } else if (!normalizedCwd.endsWith('\\') && !normalizedPath.startsWith('\\')) {
+        pathToSend = normalizedCwd + '\\' + normalizedPath;
+      } else {
+        pathToSend = normalizedCwd + normalizedPath;
+      }
+
+      console.log('[TerminalTab] Resolved relative path:', matchedPath, '->', pathToSend, 'using CWD:', cwd);
+    }
+  }
+
   // Set validation state
-  fileStore.setValidatingPath(matchedPath);
+  fileStore.setValidatingPath(pathToSend);
+
+  // Check fileWebSocket state
+  const fwsConnected = fileWebSocket.isConnected();
 
   // Ensure fileWebSocket is connected before sending
-  if (!fileWebSocket.isConnected()) {
+  if (!fwsConnected) {
     const apiUrl = settingsStore.settings.apiUrl || '';
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = apiUrl
       ? apiUrl.replace(/^http/, 'ws') + '/ws/browser'
       : `${wsProtocol}//${window.location.host}/ws/browser`;
 
+
     // Pass agentId to fileWebSocket.connect for proper routing
     fileWebSocket.connect(wsUrl, props.tab.agentId).then(() => {
-      fileWebSocket.validatePath(matchedPath, sessionId!);
+      fileWebSocket.validatePath(pathToSend, sessionId!);
     }).catch(err => {
       console.error('[TerminalTab] Failed to connect fileWebSocket:', err);
       fileStore.setValidatingPath(null);
     });
   } else {
-    fileWebSocket.validatePath(matchedPath, sessionId);
+    fileWebSocket.validatePath(pathToSend, sessionId);
   }
 }
 
@@ -261,17 +333,82 @@ function initTerminal() {
           return;
         }
 
+        const foundLinks: any[] = [];
+
         // Match .md file paths (Windows absolute, relative, Unix-style)
         // Note: '-' must be at start of character class to avoid range interpretation
-        // Matches: docs/path/file.md, ./file.md, D:\path\file.md
         const mdRegex = /[-a-zA-Z0-9_:.\\\/]+\.md/g;
-        const foundLinks: any[] = [];
         let matchResult;
 
         while ((matchResult = mdRegex.exec(lineText)) !== null) {
           const matchedPath = matchResult[0];
           const matchStart = matchResult.index;
           const matchEnd = matchStart + matchedPath.length;
+
+          // Try to build complete path by looking at previous lines
+          let completePath = matchedPath;
+
+          // Check if this might be a continuation of a previous line's path
+          // (path doesn't start with drive letter or ./ or /)
+          const isAbsolutePath = /^[A-Za-z]:/.test(matchedPath) || /^[.\/]/.test(matchedPath);
+
+          // Always try to look back for path prefix if not an absolute path
+          // For relative paths, trace back through soft-wrapped lines
+          if (!isAbsolutePath) {
+            console.log('[MD LinkProvider] Relative path detected, looking back for prefix...');
+            let lookbackLine = bufferLineNumber - 1;
+            let pathPrefix = '';
+
+            while (lookbackLine >= 0) {
+              const prevLine = buffer.getLine(lookbackLine);
+              if (!prevLine) {
+                console.log('[MD LinkProvider] No prevLine at', lookbackLine);
+                break;
+              }
+
+              const prevText = prevLine.translateToString(true); // Trim right whitespace to handle echo commands
+
+              // Find path chars at end of line
+              const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+
+              if (pathEndMatch) {
+                const endPart = pathEndMatch[1];
+                const endIndex = pathEndMatch.index ?? 0;
+                console.log('[MD LinkProvider] Found pathEndMatch:', endPart, 'at index', endIndex);
+
+                // Check if there's a separator before the path chars
+                if (endIndex > 0) {
+                  const charBefore = prevText[endIndex - 1];
+                  console.log('[MD LinkProvider] charBefore:', charBefore);
+                  if (charBefore === ' ' || charBefore === '"' || charBefore === "'" || charBefore === '`') {
+                    // Found separator - this is the start of the path
+                    pathPrefix = endPart + pathPrefix;
+                    completePath = pathPrefix + matchedPath;
+                    console.log('[MD LinkProvider] Found separator, complete path:', completePath);
+                    break;
+                  }
+                }
+
+                // No separator - continue building path
+                pathPrefix = endPart + pathPrefix;
+                console.log('[MD LinkProvider] No separator, continuing. pathPrefix now:', pathPrefix);
+                lookbackLine--;
+              } else {
+                // No path chars at end of line - stop looking
+                console.log('[MD LinkProvider] No path chars at end of line, stopping');
+                break;
+              }
+            }
+
+            // If we collected a prefix but didn't set completePath, use it
+            if (pathPrefix && completePath === matchedPath) {
+              completePath = pathPrefix + matchedPath;
+              console.log('[MD LinkProvider] Using collected prefix, complete path:', completePath);
+            }
+          }
+
+          // 调试：输出匹配结果
+          console.log('[MD LinkProvider] Found match:', matchedPath, 'completePath:', completePath, 'at line', bufferLineNumber);
 
           foundLinks.push({
             range: {
@@ -284,13 +421,119 @@ function initTerminal() {
               pointerCursor: true,
             },
             activate(_event: MouseEvent, _text: string) {
-              handleMdPathClick(matchedPath);
+              console.log('[MD LinkProvider] activate called for:', completePath);
+              handleMdPathClick(completePath);
             },
           });
         }
 
+        // Also check for path continuations (line ending with path chars that continue to .md on next line)
+        const pathEndRegex = /[-a-zA-Z0-9_:.\\\/]+$/;
+        const pathEndMatch = lineText.match(pathEndRegex);
+
+        if (pathEndMatch && foundLinks.length === 0) {
+          const matchedEnd = pathEndMatch[0];
+          const matchStart = lineText.length - matchedEnd.length;
+
+          // Check next lines for .md
+          let lookAheadLine = bufferLineNumber + 1;
+          let pathSuffix = '';
+
+          for (let i = 0; i < 3; i++) {
+            const nextLine = buffer.getLine(lookAheadLine);
+            if (!nextLine) break;
+
+            const nextText = nextLine.translateToString(true);
+
+            // Check if next line starts with path chars and has .md
+            const mdMatch = nextText.match(/^[-a-zA-Z0-9_:.\\\/]*\.md/);
+            if (mdMatch) {
+              pathSuffix = mdMatch[0];
+
+              // Build complete path
+              let completePath = matchedEnd + pathSuffix;
+
+              // Look back for path prefix
+              let lookbackLine = bufferLineNumber - 1;
+              let pathPrefix = '';
+
+              const isFirstPartAbsolute = /^[A-Za-z]:/.test(matchedEnd) || /^[.\/]/.test(matchedEnd);
+
+              if (!isFirstPartAbsolute) {
+                while (lookbackLine >= 0) {
+                  const prevLine = buffer.getLine(lookbackLine);
+                  if (!prevLine) break;
+
+                  const prevText = prevLine.translateToString(false);
+
+                  const prevMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+
+                  if (prevMatch) {
+                    const endPart = prevMatch[1];
+                    const endIndex = prevMatch.index ?? 0;
+
+                    // Check if there's a separator before the path chars
+                    if (endIndex > 0) {
+                      const charBefore = prevText[endIndex - 1];
+                      if (charBefore === ' ' || charBefore === '"' || charBefore === "'" || charBefore === '`') {
+                        // Found separator - this is the start of the path
+                        pathPrefix = endPart + pathPrefix;
+                        completePath = pathPrefix + completePath;
+                        break;
+                      }
+                    }
+
+                    // No separator - continue building path
+                    pathPrefix = endPart + pathPrefix;
+                    lookbackLine--;
+                  } else {
+                    break;
+                  }
+                }
+
+                // If we collected a prefix but didn't set completePath, use it
+                if (pathPrefix && completePath === matchedEnd + pathSuffix) {
+                  completePath = pathPrefix + completePath;
+                }
+              }
+
+              console.log('[MD LinkProvider] Cross-line path found:', completePath);
+
+              foundLinks.push({
+                range: {
+                  start: { x: matchStart + 1, y: bufferLineNumber },
+                  end: { x: lineText.length, y: bufferLineNumber },
+                },
+                text: matchedEnd,
+                decorations: {
+                  underline: true,
+                  pointerCursor: true,
+                },
+                activate(_event: MouseEvent, _text: string) {
+                  console.log('[MD LinkProvider] activate cross-line for:', completePath);
+                  handleMdPathClick(completePath);
+                },
+              });
+              break;
+            }
+
+            // Check if next line has path chars but no .md yet
+            const pathContMatch = nextText.match(/^[-a-zA-Z0-9_:.\\\/]+/);
+            if (pathContMatch) {
+              pathSuffix = pathContMatch[0];
+              lookAheadLine++;
+            } else {
+              break;
+            }
+          }
+        }
+
+        if (foundLinks.length > 0) {
+          console.log('[MD LinkProvider] Returning', foundLinks.length, 'links for line', bufferLineNumber);
+        }
         callback(foundLinks.length > 0 ? foundLinks : undefined);
       } catch (err) {
+        console.error('[MD LinkProvider] Error:', err);
         callback(undefined);
       }
     },
@@ -313,15 +556,20 @@ function initTerminal() {
     const x = Math.floor((e.clientX - rect.left) / cellWidth);
     const y = Math.floor((e.clientY - rect.top) / cellHeight);
 
-    // Get buffer line
+    // Get buffer line - need to account for the scroll position
     const buffer = terminal.buffer.active;
-    const baseY = buffer.baseY;
-    const bufferLine = y + baseY;
+    const baseY = buffer.baseY;  // How many lines are scrolled up
+    const bufferLine = y + baseY;  // Convert screen Y to buffer Y
     const line = buffer.getLine(bufferLine);
 
-    if (!line) return;
+
+    if (!line) {
+      return;
+    }
 
     const lineText = line.translateToString(true);
+
+    // 调试：输出点击位置和行内容
 
     // Check if click is on a .md file (Windows absolute, relative, Unix-style)
     const mdRegex = /[-a-zA-Z0-9_:.\\\/]+\.md/g;
@@ -331,12 +579,154 @@ function initTerminal() {
       const matchStart = match.index;
       const matchEnd = matchStart + matchedPath.length;
 
+
       // Check if click is within this match (x is 0-based column)
       if (x >= matchStart && x < matchEnd) {
-        handleMdPathClick(matchedPath);
+        // Try to build complete path for multi-line paths
+        let completePath = matchedPath;
+        const isAbsolutePath = /^[A-Za-z]:/.test(matchedPath) || /^[.\/]/.test(matchedPath);
+
+        // Always try to look back for path prefix if not an absolute path
+        // For relative paths, trace back through soft-wrapped lines
+        if (!isAbsolutePath) {
+          let lookbackLine = bufferLine - 1;
+          let pathPrefix = '';
+
+          while (lookbackLine >= 0) {
+            const prevLine = buffer.getLine(lookbackLine);
+            if (!prevLine) break;
+
+            const prevText = prevLine.translateToString(false);
+
+            // Find path chars at end of line
+            const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+
+            if (pathEndMatch) {
+              const endPart = pathEndMatch[1];
+              const endIndex = pathEndMatch.index ?? 0;
+
+              // Check if there's a separator before the path chars
+              if (endIndex > 0) {
+                const charBefore = prevText[endIndex - 1];
+                if (charBefore === ' ' || charBefore === '"' || charBefore === "'" || charBefore === '`') {
+                  // Found separator - this is the start of the path
+                  pathPrefix = endPart + pathPrefix;
+                  completePath = pathPrefix + matchedPath;
+                  break;
+                }
+              }
+
+              // No separator - continue building path
+              pathPrefix = endPart + pathPrefix;
+              lookbackLine--;
+            } else {
+              break;
+            }
+          }
+
+          // If we collected a prefix but didn't set completePath, use it
+          if (pathPrefix && completePath === matchedPath) {
+            completePath = pathPrefix + matchedPath;
+          }
+        }
+
+        handleMdPathClick(completePath);
+        e.stopPropagation();  // Prevent event from bubbling
         return;
       }
     }
+
+    // No .md match found on current line - check if clicked on a path that continues to next line
+    // Match path-like content (ending with \ or / or just path chars at end of line)
+    const pathEndRegex = /[-a-zA-Z0-9_:.\\\/]+$/;
+    const pathEndMatch = lineText.match(pathEndRegex);
+
+    if (pathEndMatch) {
+      const matchedEnd = pathEndMatch[0];
+      const matchStart = lineText.length - matchedEnd.length;
+
+
+      // Check if click is on this path end
+      if (x >= matchStart) {
+        // Check next lines for .md
+        let lookAheadLine = bufferLine + 1;
+        let pathSuffix = '';
+
+        // Look ahead up to 3 lines
+        for (let i = 0; i < 3; i++) {
+          const nextLine = buffer.getLine(lookAheadLine);
+          if (!nextLine) break;
+
+          const nextText = nextLine.translateToString(true);
+
+          // Check if next line starts with path chars and has .md
+          const mdMatch = nextText.match(/^[-a-zA-Z0-9_:.\\\/]*\.md/);
+          if (mdMatch) {
+            pathSuffix = mdMatch[0];
+
+            // Now look back to find the complete path start
+            let completePath = matchedEnd + pathSuffix;
+            let lookbackLine = bufferLine - 1;
+            let pathPrefix = '';
+
+            // Check if matchedEnd starts with path separator (continuation from previous line)
+            const isFirstPartAbsolute = /^[A-Za-z]:/.test(matchedEnd) || /^[.\/]/.test(matchedEnd);
+
+            if (!isFirstPartAbsolute) {
+              while (lookbackLine >= 0) {
+                const prevLine = buffer.getLine(lookbackLine);
+                if (!prevLine) break;
+
+                const prevText = prevLine.translateToString(false);
+
+                const prevMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+
+                if (prevMatch) {
+                  const endPart = prevMatch[1];
+                  const endIndex = prevMatch.index ?? 0;
+
+                  // Check if there's a separator before the path chars
+                  if (endIndex > 0) {
+                    const charBefore = prevText[endIndex - 1];
+                    if (charBefore === ' ' || charBefore === '"' || charBefore === "'" || charBefore === '`') {
+                      // Found separator - this is the start of the path
+                      pathPrefix = endPart + pathPrefix;
+                      completePath = pathPrefix + completePath;
+                      break;
+                    }
+                  }
+
+                  // No separator - continue building path
+                  pathPrefix = endPart + pathPrefix;
+                  lookbackLine--;
+                } else {
+                  break;
+                }
+              }
+
+              // If we collected a prefix but didn't set completePath, use it
+              if (pathPrefix && completePath === matchedEnd + pathSuffix) {
+                completePath = pathPrefix + completePath;
+              }
+            }
+
+            handleMdPathClick(completePath);
+            e.stopPropagation();
+            return;
+          }
+
+          // Check if next line has path chars but no .md yet
+          const pathContMatch = nextText.match(/^[-a-zA-Z0-9_:.\\\/]+/);
+          if (pathContMatch) {
+            pathSuffix = pathContMatch[0];
+            lookAheadLine++;
+          } else {
+            break;
+          }
+        }
+      }
+    }
+
   });
 
   // Setup scroll tracking to detect user scroll

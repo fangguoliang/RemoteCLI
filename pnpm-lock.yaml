@@ -131,6 +131,9 @@ importers:
       '@vitejs/plugin-vue':
         specifier: ^5.2.1
         version: 5.2.4(vite@6.4.1(@types/node@20.19.37)(terser@5.46.1)(tsx@4.21.0))(vue@3.5.30(typescript@5.9.3))
+      eruda:
+        specifier: ^3.4.3
+        version: 3.4.3
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -1915,6 +1918,9 @@ packages:
   entities@7.0.1:
     resolution: {integrity: sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA==}
     engines: {node: '>=0.12'}
+
+  eruda@3.4.3:
+    resolution: {integrity: sha512-J2TsF4dXSspOXev5bJ6mljv0dRrxj21wklrDzbvPmYaEmVoC+2psylyRi70nUPFh1mTQfIBsSusUtAMZtUN+/w==}
 
   es-abstract@1.24.1:
     resolution: {integrity: sha512-zHXBLhP+QehSSbsS9Pt23Gg964240DPd6QCf8WpkqEXxQ7fhdZzYsocOr5u7apWonsS5EjZDmTF+/slGMyasvw==}
@@ -5146,6 +5152,8 @@ snapshots:
   entities@4.5.0: {}
 
   entities@7.0.1: {}
+
+  eruda@3.4.3: {}
 
   es-abstract@1.24.1:
     dependencies:

@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 import { webcrypto } from 'crypto';
 import { tunnelManager } from './tunnel.js';
 import { agentModel, userModel, agentPermissionModel } from '../db/index.js';
+import { handleHttpResponse } from '../proxy/index.js';
 
 const crypto = webcrypto;
 
@@ -171,6 +172,11 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
 
     case 'ping':
       ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+      break;
+
+    case 'http:response':
+      // Agent returns HTTP response, route to proxy handler
+      handleHttpResponse(message);
       break;
 
     default:

@@ -201,25 +201,34 @@ function handleHtmlPathClick(matchedPath: string) {
     return;
   }
 
-  // Parse CWD from terminal buffer for relative paths
   let pathToSend = matchedPath;
-  const isAbsolutePath = /^[A-Za-z]:/.test(matchedPath) || /^[.\/]/.test(matchedPath);
 
-  if (!isAbsolutePath) {
-    const cwd = parseCwdFromBuffer();
-    if (cwd) {
-      const normalizedCwd = cwd.replace(/\//g, '\\');
-      const normalizedPath = matchedPath.replace(/\//g, '\\');
+  // Handle file:// prefix (e.g. file://C:\path\file.html or file:///C:\path\file.html)
+  if (/^file:\/\//i.test(matchedPath)) {
+    let rawPath = matchedPath.replace(/^file:\/\//i, '');
+    // Strip leading slashes (handles both file://C: and file:///C: variants)
+    rawPath = rawPath.replace(/^\/+/, '');
+    pathToSend = rawPath.replace(/\//g, '\\');
+  } else {
+    // Parse CWD from terminal buffer for relative paths
+    const isAbsolutePath = /^[A-Za-z]:/.test(matchedPath) || /^[.\/]/.test(matchedPath);
 
-      if (normalizedCwd.endsWith('\\') && !normalizedPath.startsWith('\\')) {
-        pathToSend = normalizedCwd + normalizedPath;
-      } else if (!normalizedCwd.endsWith('\\') && !normalizedPath.startsWith('\\')) {
-        pathToSend = normalizedCwd + '\\' + normalizedPath;
-      } else {
-        pathToSend = normalizedCwd + normalizedPath;
+    if (!isAbsolutePath) {
+      const cwd = parseCwdFromBuffer();
+      if (cwd) {
+        const normalizedCwd = cwd.replace(/\//g, '\\');
+        const normalizedPath = matchedPath.replace(/\//g, '\\');
+
+        if (normalizedCwd.endsWith('\\') && !normalizedPath.startsWith('\\')) {
+          pathToSend = normalizedCwd + normalizedPath;
+        } else if (!normalizedCwd.endsWith('\\') && !normalizedPath.startsWith('\\')) {
+          pathToSend = normalizedCwd + '\\' + normalizedPath;
+        } else {
+          pathToSend = normalizedCwd + normalizedPath;
+        }
+
+        console.log('[TerminalTab] Resolved HTML path:', matchedPath, '->', pathToSend);
       }
-
-      console.log('[TerminalTab] Resolved HTML path:', matchedPath, '->', pathToSend);
     }
   }
 
@@ -418,6 +427,11 @@ function initTerminal() {
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(serializeAddon);
   terminal.open(terminalRef.value);
+
+  // Attach terminal instance to DOM for external access (e.g., testing, devtools)
+  if (terminalRef.value) {
+    (terminalRef.value as any).__xterm = terminal;
+  }
 
   // Helper: check if charBefore is a valid path separator
   // Special handling for colon: if the matched part starts with [A-Za-z]: (Windows drive),
@@ -777,6 +791,36 @@ function initTerminal() {
           });
         }
 
+        // file:// URL detection
+        // Skip URLs that reach the end of the line (likely wrapped) — let DirectClick handle those
+        const fileUrlRegex = /file:\/\/([A-Za-z]:[^\s"'<>]+)/g;
+        let fileUrlMatch;
+
+        while ((fileUrlMatch = fileUrlRegex.exec(lineText)) !== null) {
+          const matchedFileUrl = fileUrlMatch[0];
+          const matchStart = fileUrlMatch.index;
+          const matchEnd = matchStart + matchedFileUrl.length;
+
+          // If URL reaches near end of line, it likely wraps — skip LinkProvider for it
+          // DirectClick handler will handle the full URL reconstruction
+          if (matchEnd >= terminal!.cols - 2 || matchEnd >= lineText.length - 2) continue;
+
+          foundLinks.push({
+            range: {
+              start: { x: matchStart + 1, y: bufferLineNumber },
+              end: { x: matchEnd, y: bufferLineNumber },
+            },
+            text: matchedFileUrl,
+            decorations: {
+              underline: true,
+              pointerCursor: true,
+            },
+            activate(_event: MouseEvent, _text: string) {
+              handleHtmlPathClick(matchedFileUrl);
+            },
+          });
+        }
+
         // HTML file detection
         const htmlRegex = /[-a-zA-Z0-9_:.\\\/]+\.html?/g;
         let htmlMatch;
@@ -959,6 +1003,97 @@ function initTerminal() {
       }
     }
     console.log('[DirectClick] mdRegex loop finished, no click inside match');
+
+    // Check if click is on a file:// URL
+    // First try precise coordinate matching, then fall back to line-level detection
+    // IMPORTANT: Must handle soft-wrapped URLs (mobile viewport)
+    const fileUrlRegex = /file:\/\/[A-Za-z]:[^\s"'<>]+/g;
+    let fileUrlMatch;
+    const fileUrlsOnLine = [];
+    while ((fileUrlMatch = fileUrlRegex.exec(lineText)) !== null) {
+      let fullUrl = fileUrlMatch[0];
+      const matchEnd = fileUrlMatch.index + fullUrl.length;
+
+      // Check if URL appears to be cut off by soft wrap
+      // If the match reaches near the end of the terminal width, look at next line(s)
+      // IMPORTANT: URL may wrap across multiple lines on narrow mobile screens
+      if (matchEnd >= terminal.cols - 2 || matchEnd >= lineText.length - 2) {
+        let lookAheadLine = bufferLine + 1;
+        while (lookAheadLine < buffer.length) {
+          const nextLine = buffer.getLine(lookAheadLine);
+          if (!nextLine) break;
+          const nextText = nextLine.translateToString(true).trimStart();
+          if (!nextText || !/^[A-Za-z0-9_.\\\/-]/.test(nextText)) break;
+
+          // Take first whitespace-delimited chunk from continuation line
+          const chunk = nextText.split(/\s+/)[0];
+          fullUrl = fullUrl + chunk;
+
+          // If this continuation line also reaches the end, keep looking
+          const nextLineLen = nextText.length;
+          if (nextLineLen < terminal.cols - 2) break; // Last chunk, stop
+
+          lookAheadLine++;
+        }
+        console.log('[DirectClick] file:// URL wrapped, reconstructed:', fullUrl);
+      }
+
+      fileUrlsOnLine.push({ url: fullUrl, start: fileUrlMatch.index, end: matchEnd });
+    }
+
+    for (const fu of fileUrlsOnLine) {
+      console.log('[DirectClick] fileUrlRegex match:', JSON.stringify(fu.url), 'start:', fu.start, 'end:', fu.end, 'clickX:', x, 'cols:', terminal.cols);
+      if (x >= fu.start && x < fu.end) {
+        console.log('[DirectClick] Click inside file:// URL, path:', fu.url);
+        handleHtmlPathClick(fu.url);
+        e.stopPropagation();
+        return;
+      }
+    }
+
+    // Fallback: if the line starts with file:// and the click is anywhere in the text area, trigger it
+    // This handles cases where the coordinate calculation overflows the terminal width
+    if (fileUrlsOnLine.length > 0 && fileUrlsOnLine[0].start === 0 && x >= 0 && x < terminal.cols + 5) {
+      console.log('[DirectClick] Click on file:// URL line (overflow tolerance), path:', fileUrlsOnLine[0].url);
+      handleHtmlPathClick(fileUrlsOnLine[0].url);
+      e.stopPropagation();
+      return;
+    }
+    console.log('[DirectClick] fileUrlRegex loop finished, no click inside match');
+
+    // Check if click is on an HTML file path (without file:// prefix, and not already part of file://)
+    const htmlFileRegex = /(?<!file:\/\/)[-a-zA-Z0-9_:.\\\/]+\.html?/g;
+    let htmlFileMatch;
+    while ((htmlFileMatch = htmlFileRegex.exec(lineText)) !== null) {
+      const matchedPath = htmlFileMatch[0];
+      const matchStart = htmlFileMatch.index;
+      const matchEnd = matchStart + matchedPath.length;
+      console.log('[DirectClick] htmlFileRegex match:', JSON.stringify(matchedPath), 'start:', matchStart, 'end:', matchEnd, 'clickX:', x);
+      if (x >= matchStart && x < matchEnd) {
+        // Check if this might be a continuation of a file:// URL from the previous line
+        const prevLine = buffer.getLine(bufferLine - 1);
+        if (prevLine) {
+          const prevText = prevLine.translateToString(true);
+          const prevFileUrlMatch = prevText.match(/(file:\/\/[A-Za-z]:[^\s"'<>]*)$/);
+          if (prevFileUrlMatch) {
+            // Previous line has a file:// URL that was cut off
+            const prefix = prevFileUrlMatch[1];
+            // Remove any partial overlap: if prev line ends with partial path, don't double-count
+            // The previous line's path fragment at end connects to current line's start
+            const fullUrl = prefix + matchedPath;
+            console.log('[DirectClick] HTML path is continuation of file:// from prev line:', fullUrl);
+            handleHtmlPathClick(fullUrl);
+            e.stopPropagation();
+            return;
+          }
+        }
+        console.log('[DirectClick] Click inside HTML file path:', matchedPath);
+        handleHtmlPathClick(matchedPath);
+        e.stopPropagation();
+        return;
+      }
+    }
+    console.log('[DirectClick] htmlFileRegex loop finished, no click inside match');
 
     // No .md match found on current line - check if clicked on a path that continues to next line
     // Match path-like content (ending with \ or / or just path chars at end of line)

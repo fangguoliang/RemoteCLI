@@ -101,7 +101,10 @@ export function handleHttpResponse(message: Message) {
     clearTimeout(pending.timeout);
     pendingRequests.delete(payload.requestId);
 
-    if (payload.error) {
+    // Only reject when there's no response body (transport/protocol error).
+    // Agent error responses with a valid body (e.g. 404 with error text)
+    // should resolve normally so the browser receives the correct status and body.
+    if (payload.error && !payload.body) {
       pending.reject(new Error(payload.error));
     } else {
       pending.resolve(payload);

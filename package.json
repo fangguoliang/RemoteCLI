@@ -13,9 +13,14 @@
     "test": "pnpm -r run test"
   },
   "devDependencies": {
+    "playwright": "^1.60.0",
     "typescript": "^5.3.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["bcrypt", "better-sqlite3", "node-pty"]
+    "onlyBuiltDependencies": [
+      "bcrypt",
+      "better-sqlite3",
+      "node-pty"
+    ]
   }
 }

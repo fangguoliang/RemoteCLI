@@ -467,10 +467,34 @@ export const useTerminalStore = defineStore('terminal', () => {
     return tabCwd[tabId];
   }
 
-  // Get the CWD of the active tab
+  // Registry for buffer parsers (tabId -> function that returns CWD from terminal buffer)
+  const bufferParsers = new Map<string, () => string | null>();
+
+  // Register a CWD-from-buffer parser for a tab
+  function registerBufferParser(tabId: string, parser: () => string | null) {
+    bufferParsers.set(tabId, parser);
+  }
+
+  // Unregister a buffer parser
+  function unregisterBufferParser(tabId: string) {
+    bufferParsers.delete(tabId);
+  }
+
+  // Get the CWD of the active tab (store first, then buffer fallback)
   function getActiveTabCwd(): string | undefined {
     if (activeTabId.value) {
-      return tabCwd[activeTabId.value];
+      const stored = tabCwd[activeTabId.value];
+      if (stored) return stored;
+      // Fallback: parse from terminal buffer directly
+      const parser = bufferParsers.get(activeTabId.value);
+      if (parser) {
+        const fromBuffer = parser();
+        if (fromBuffer) {
+          // Cache it so future calls return the same value
+          tabCwd[activeTabId.value] = fromBuffer;
+          return fromBuffer;
+        }
+      }
     }
     return undefined;
   }
@@ -596,5 +620,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     getTabCwd,
     getActiveTabCwd,
     removeTabCwd,
+    registerBufferParser,
+    unregisterBufferParser,
   };
 });

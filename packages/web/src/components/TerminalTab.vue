@@ -63,12 +63,18 @@ function parseCwdFromBuffer(): string | null {
   const buffer = terminal.buffer.active;
   const bufferLength = buffer.length;
 
+  // Debug: log buffer overview on each call
+  console.log('[TerminalTab][CWD-Parse] bufferLength:', bufferLength, 'baseY:', buffer.baseY);
+
   // Look back up to 20 lines from the bottom
   for (let i = bufferLength - 1; i >= Math.max(0, bufferLength - 20); i--) {
     const line = buffer.getLine(i);
     if (!line) continue;
 
     const lineText = line.translateToString(true);
+
+    // Debug: log every line examined
+    console.log('[TerminalTab][CWD-Parse] line', i, '/', bufferLength, '| isWrapped:', line.isWrapped, '| text:', JSON.stringify(lineText.substring(0, 80)));
 
     // Try to match standard PowerShell prompt: "PS D:\path>" or "PS C:\Users\admin>"
     const psMatch = lineText.match(/PS\s+([A-Za-z]:[^\r\n>]+)>/);
@@ -229,6 +235,8 @@ function handleHtmlPathClick(matchedPath: string) {
 }
 
 onMounted(() => {
+  // Register CWD buffer parser so FileView can parse CWD from terminal buffer directly
+  terminalStore.registerBufferParser(props.tab.id, parseCwdFromBuffer);
   // Only initialize terminal if this tab is visible
   // If not visible, it will be initialized when it becomes visible
   if (props.visible) {
@@ -237,6 +245,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  terminalStore.unregisterBufferParser(props.tab.id);
   terminalStore.unregisterKeySender(props.tab.id);
   terminalStore.unregisterTabFocuser(props.tab.id);
   terminalStore.unregisterTabScroller(props.tab.id);
@@ -1359,11 +1368,20 @@ function handleWsMessage(msg: any) {
       break;
     case 'session:output':
       terminal?.write(msg.payload.data);
-      // Track CWD from terminal buffer after output
-      if (terminal) {
-        const cwd = parseCwdFromBuffer();
-        if (cwd) {
-          terminalStore.setTabCwd(props.tab.id, cwd);
+      // Track CWD from raw output text (strip ANSI codes first)
+      if (msg.payload.data) {
+        const cleanData = msg.payload.data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+        for (const rawLine of cleanData.split(/\r?\n/)) {
+          const psMatch = rawLine.match(/PS\s+([A-Za-z]:[^\r\n>]+)>/);
+          if (psMatch) {
+            terminalStore.setTabCwd(props.tab.id, psMatch[1].trim());
+            break;
+          }
+          const starshipMatch = rawLine.match(/([A-Za-z]:[^\r\n❯]+?)\s*(?:on\s+\w+\s*)?❯/);
+          if (starshipMatch) {
+            terminalStore.setTabCwd(props.tab.id, starshipMatch[1].trim());
+            break;
+          }
         }
       }
       // Auto-scroll to bottom if user hasn't scrolled up

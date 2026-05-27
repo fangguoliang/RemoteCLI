@@ -412,6 +412,7 @@ function handleClickOutside(e: MouseEvent): void {
 let agentLoadInterval: number | null = null;
 let cwdPollInterval: number | null = null;
 let wsConnected = false;
+let isInitializing = false;
 
 // Auto-refresh on upload complete
 function handleUploadComplete(dir: string) {
@@ -421,66 +422,86 @@ function handleUploadComplete(dir: string) {
 }
 
 onMounted(async () => {
-  console.log('[FileView] onMounted start');
+  const _dbgT0 = performance.now();
+  console.log('[FileView][DEBUG] ============ onMounted START ============');
+  isInitializing = true;
+  console.log('[FileView][DEBUG] terminalStore.tabs:', JSON.stringify(terminalStore.tabs.map(t => ({ id: t.id, agentId: t.agentId, title: t.title }))));
+  console.log('[FileView][DEBUG] terminalStore.activeTabId:', terminalStore.activeTabId);
+  console.log('[FileView][DEBUG] terminalStore.getActiveTabCwd():', terminalStore.getActiveTabCwd());
   document.addEventListener('click', handleClickOutside);
 
   // Connect WebSocket first
-  console.log('[FileView] connecting WebSocket...');
+  console.log('[FileView][DEBUG] connecting WebSocket...', (performance.now() - _dbgT0).toFixed(0) + 'ms');
   await connectWebSocket();
   wsConnected = true;
-  console.log('[FileView] WebSocket connected');
+  console.log('[FileView][DEBUG] WebSocket connected', (performance.now() - _dbgT0).toFixed(0) + 'ms');
 
   // Register upload complete handler
   fileWebSocket.onUploadComplete(handleUploadComplete);
 
   // Load agents
-  console.log('[FileView] loading agents...');
+  console.log('[FileView][DEBUG] loading agents...', (performance.now() - _dbgT0).toFixed(0) + 'ms');
   await loadAgents();
-  console.log('[FileView] agents loaded, onlineAgents:', onlineAgents.value.length);
+  console.log('[FileView][DEBUG] agents loaded, online:', onlineAgents.value.length, (performance.now() - _dbgT0).toFixed(0) + 'ms');
+  console.log('[FileView][DEBUG] all agents:', JSON.stringify(agents.value.map(a => ({ agentId: a.agentId, name: a.name, online: a.online }))));
+  console.log('[FileView][DEBUG] onlineAgents:', JSON.stringify(onlineAgents.value.map(a => a.agentId)));
   agentLoadInterval = window.setInterval(loadAgents, 5000);
 
   // Auto-select first online agent if available
+  console.log('[FileView][DEBUG] selectedAgentId (before auto-select):', selectedAgentId.value);
   if (onlineAgents.value.length > 0 && !selectedAgentId.value) {
     const activeTab = terminalStore.tabs.find(t => t.id === terminalStore.activeTabId);
     const activeTabAgent = activeTab ? agents.value.find(a => a.agentId === activeTab.agentId) : null;
+    const activeTabCwdBefore = terminalStore.getActiveTabCwd();
+
+    console.log('[FileView][DEBUG] activeTab found:', activeTab ? { id: activeTab.id, agentId: activeTab.agentId } : 'null');
+    console.log('[FileView][DEBUG] activeTabAgent:', activeTabAgent ? { agentId: activeTabAgent.agentId, online: activeTabAgent.online } : 'null');
+    console.log('[FileView][DEBUG] getActiveTabCwd():', activeTabCwdBefore);
 
     if (activeTab && activeTabAgent?.online) {
-      // There's an active terminal tab - check for CWD with brief polling
-      // to give terminal output time to arrive (handles slow networks)
-      const activeTabCwd = terminalStore.getActiveTabCwd();
-      if (activeTabCwd) {
-        // CWD already available, use it immediately
+      console.log('[FileView][DEBUG] => branch: activeTab + online agent found, checking CWD');
+      if (activeTabCwdBefore) {
+        console.log('[FileView][DEBUG] => branch: CWD available immediately →', activeTabCwdBefore);
         selectedAgentId.value = activeTab.agentId;
         fileStore.setLoading(true);
-        fileWebSocket.browse(activeTabCwd, activeTab.agentId);
+        fileWebSocket.browse(activeTabCwdBefore, activeTab.agentId);
       } else {
-        // CWD not yet parsed from terminal output - select agent first
-        // then poll for CWD to arrive
+        console.log('[FileView][DEBUG] => branch: CWD NOT available, starting CWD poll (max 120 attempts, 250ms interval = 30s)');
         selectedAgentId.value = activeTab.agentId;
         let attempts = 0;
+        let cwdFound = false;
         cwdPollInterval = window.setInterval(() => {
           attempts++;
           const cwd = terminalStore.getActiveTabCwd();
-          if (cwd && selectedAgentId.value === activeTab.agentId) {
+          console.log(`[FileView][DEBUG] cwdPoll #${attempts}: getActiveTabCwd() =`, cwd, '| selectedAgentId:', selectedAgentId.value);
+          if (cwd && selectedAgentId.value === activeTab.agentId && !cwdFound) {
+            cwdFound = true;
+            console.log('[FileView][DEBUG] cwdPoll SUCCESS → browsing to', cwd);
             clearInterval(cwdPollInterval!);
             cwdPollInterval = null;
             fileStore.setLoading(true);
             fileWebSocket.browse(cwd, activeTab.agentId);
           }
-          if (attempts >= 10) {
-            // Give up after 2.5s, fall back to home
+          if (attempts >= 120) {
+            console.log('[FileView][DEBUG] cwdPoll TIMEOUT (120 attempts) → no CWD received, keeping current directory');
             clearInterval(cwdPollInterval!);
             cwdPollInterval = null;
-            if (selectedAgentId.value === activeTab.agentId) {
-              selectAgent(activeTab.agentId);
-            }
+            // Don't fall back to selectAgent - it would reset user's manual selection to ~
+            // The CWD watch below will handle navigation when CWD eventually arrives
           }
         }, 250);
       }
     } else {
+      console.log('[FileView][DEBUG] => branch: no activeTab or agent offline → selectAgent(onlineAgents[0])', onlineAgents.value[0].agentId);
       selectAgent(onlineAgents.value[0].agentId);
     }
+  } else if (selectedAgentId.value) {
+    console.log('[FileView][DEBUG] => branch: selectedAgentId already set, skipping auto-select');
+  } else {
+    console.log('[FileView][DEBUG] => branch: no online agents, skipping auto-select');
   }
+  console.log('[FileView][DEBUG] ============ onMounted END ============');
+  isInitializing = false;
 });
 
 onUnmounted(() => {
@@ -495,7 +516,11 @@ onUnmounted(() => {
 
 // Watch for agents changes and auto-select
 watch(onlineAgents, (newOnlineAgents) => {
-  if (!wsConnected || selectedAgentId.value) return;
+  console.log('[FileView][DEBUG] watch(onlineAgents) fired, wsConnected:', wsConnected, '| selectedAgentId:', selectedAgentId.value, '| isInitializing:', isInitializing, '| newOnlineCount:', newOnlineAgents.length);
+  if (!wsConnected || selectedAgentId.value || isInitializing) {
+    console.log('[FileView][DEBUG] watch early exit: wsConnected=', wsConnected, ', selectedAgentId=', selectedAgentId.value, ', isInitializing=', isInitializing);
+    return;
+  }
 
   // If no agent selected and there are online agents, try active tab CWD
   if (newOnlineAgents.length > 0) {
@@ -512,6 +537,24 @@ watch(onlineAgents, (newOnlineAgents) => {
     }
   }
 });
+
+// Watch for active tab CWD changes and auto-navigate (handles delayed session:output)
+watch(
+  () => {
+    const activeTab = terminalStore.tabs.find(t => t.id === terminalStore.activeTabId);
+    return activeTab ? terminalStore.getTabCwd(activeTab.id) : undefined;
+  },
+  (cwd) => {
+    if (!cwd || !selectedAgentId.value) return;
+    console.log('[FileView][DEBUG] tabCwd watch triggered, browsing to:', cwd);
+    fileWebSocket.browse(cwd, selectedAgentId.value);
+    // Stop polling once we have a CWD
+    if (cwdPollInterval) {
+      clearInterval(cwdPollInterval);
+      cwdPollInterval = null;
+    }
+  }
+);
 </script>
 
 <style scoped>

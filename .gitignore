@@ -5,3 +5,12 @@ dist/
 .DS_Store
 *.db
 data/
+
+# Debug Loop — runtime files (contain secrets, never commit)
+.debug-loop-secrets.json
+.debug-loop-console.json
+.debug-loop-network.json
+.debug-loop-backend.log
+.debug-loop-playwright.mjs
+.debug-loop-report.md
+.debug-loop-state.json

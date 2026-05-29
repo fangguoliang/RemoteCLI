@@ -278,17 +278,40 @@ class FileWebSocketService {
 
       // All chunks received
       if (transfer.chunks.size === transfer.totalChunks) {
-        // Assemble content
-        let content = '';
+        // Assemble all raw bytes first
+        const allBytes = new Uint8Array(transfer.totalSize);
+        let offset = 0;
         for (let i = 0; i < transfer.totalChunks; i++) {
           const chunk = transfer.chunks.get(i);
           if (chunk) {
-            // Decode base64 to text
-            content += this.base64ToText(chunk);
+            const binaryString = atob(chunk);
+            const chunkBytes = new Uint8Array(binaryString.length);
+            for (let j = 0; j < binaryString.length; j++) {
+              chunkBytes[j] = binaryString.charCodeAt(j);
+            }
+            allBytes.set(chunkBytes, offset);
+            offset += chunkBytes.length;
           }
         }
 
+        // Detect encoding from BOM and decode accordingly
+        let content: string;
+        if (allBytes.length >= 2 && allBytes[0] === 0xff && allBytes[1] === 0xfe) {
+          // UTF-16LE BOM
+          content = new TextDecoder('utf-16le').decode(allBytes.subarray(2));
+        } else if (allBytes.length >= 2 && allBytes[0] === 0xfe && allBytes[1] === 0xff) {
+          // UTF-16BE BOM
+          content = new TextDecoder('utf-16be').decode(allBytes.subarray(2));
+        } else if (allBytes.length >= 3 && allBytes[0] === 0xef && allBytes[1] === 0xbb && allBytes[2] === 0xbf) {
+          // UTF-8 BOM
+          content = new TextDecoder('utf-8').decode(allBytes.subarray(3));
+        } else {
+          // Default: UTF-8 (no BOM)
+          content = new TextDecoder('utf-8').decode(allBytes);
+        }
+
         // Store content and show viewer
+        console.log('[fileWebSocket] viewer showing file:', payload.path, 'content length:', content.length);
         store.setViewerContent(content);
         store.setViewerLoading(false);
         store.setViewerVisible(true);
@@ -298,20 +321,6 @@ class FileWebSocketService {
         this.transferChunks.delete(viewId);
         this.viewingPath = null;
       }
-    }
-  }
-
-  // Helper: base64 to text
-  private base64ToText(base64: string): string {
-    try {
-      const binaryString = atob(base64);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      return new TextDecoder('utf-8').decode(bytes);
-    } catch {
-      return '';
     }
   }
 

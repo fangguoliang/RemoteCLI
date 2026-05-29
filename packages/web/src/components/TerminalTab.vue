@@ -480,7 +480,7 @@ function initTerminal() {
         // Match .md file paths (Windows absolute, relative, Unix-style, bare filenames)
         // Handles: quoted paths, colon prefix (:file.md), trailing punctuation
         // Note: '-' must be at start of character class to avoid range interpretation
-        const mdRegex = /(["'])([-a-zA-Z0-9_\u4e00-\u9fff. \\\/]+\.md)\1|([A-Za-z]:[\\\/][^\s"'<>]*\.md)|([-a-zA-Z0-9_\u4e00-\u9fff.]+[\\\/][^\s"'<>]*\.md)|(?:^|(?<=\s)|(?<=:)|(?<=：))([-\w\u4e00-\u9fff.]+\.md)(?=\s|$|[,;.!?(){}\]\u3002\uff0c\uff01\uff1f\u300b>])/g;
+        const mdRegex = /(["'])([-a-zA-Z0-9_\u4e00-\u9fff. \\\/]+\.md)\1|([A-Za-z]:[\\\/][^\s"'<>]*\.md)|([-a-zA-Z0-9_\u4e00-\u9fff.]+[\\\/][^\s"'<>]*\.md)|(?:^|(?<=\s)|(?<=:)|(?<=：)|(?<=\())([-\w\u4e00-\u9fff.]+\.md)(?=\s|$|[,;.!?(){}\]\u3002\uff0c\uff01\uff1f\u300b>])/g;
         let matchResult;
 
         while ((matchResult = mdRegex.exec(lineText)) !== null) {
@@ -570,7 +570,6 @@ function initTerminal() {
               pointerCursor: true,
             },
             activate(_event: MouseEvent, _text: string) {
-              console.log('[MD LinkProvider] activate called for:', completePath);
               handleMdPathClick(completePath);
             },
           });
@@ -948,7 +947,6 @@ function initTerminal() {
 
       // Check if click is within this match (x is 0-based column)
       if (x >= matchStart && x < matchEnd) {
-        console.log('[DirectClick] Click inside md match, path:', matchedPath);
         // Try to build complete path for multi-line paths
         let completePath = matchedPath;
         const isAbsolutePath = /^[A-Za-z]:/.test(matchedPath) || /^[.\/]/.test(matchedPath);

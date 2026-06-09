@@ -457,13 +457,7 @@ function initTerminal() {
     provideLinks(bufferLineNumber: number, callback: (links: any[] | undefined) => void) {
       try {
         const buffer = terminal!.buffer.active;
-        const baseY = buffer.baseY;
-        const viewportY = bufferLineNumber - baseY;
-
-        // Debug: log coordinate system info
-        console.log('[MD LinkProvider] Line', bufferLineNumber, 'baseY:', baseY, 'viewportY:', viewportY, 'terminal.rows:', terminal!.rows);
-
-        const line = buffer.getLine(bufferLineNumber);
+        const line = buffer.getLine(bufferLineNumber - 1);  // bufferLineNumber is 1-based from xterm, getLine needs 0-based
         if (!line) {
           callback(undefined);
           return;
@@ -504,7 +498,7 @@ function initTerminal() {
           // For relative paths, trace back through soft-wrapped lines
           if (!isAbsolutePath) {
             console.log('[MD LinkProvider] Relative path detected, looking back for prefix...');
-            let lookbackLine = bufferLineNumber - 1;
+            let lookbackLine = bufferLineNumber - 2;  // prev line in 0-based: bufferLineNumber is 1-based, prev = -2
             let pathPrefix = '';
 
             while (lookbackLine >= 0) {
@@ -588,7 +582,7 @@ function initTerminal() {
             const suffixStart = lineText.indexOf(suffixPart);
 
             // Look back at previous line for the path prefix
-            const prevLineNum = bufferLineNumber - 1;
+            const prevLineNum = bufferLineNumber - 2;  // prev line in 0-based: bufferLineNumber is 1-based, prev = -2
             const prevLine = buffer.getLine(prevLineNum);
             if (prevLine) {
               const prevText = prevLine.translateToString(true);
@@ -667,7 +661,7 @@ function initTerminal() {
           const matchStart = lineText.length - matchedEnd.length;
 
           // Check next lines for .md
-          let lookAheadLine = bufferLineNumber + 1;
+          let lookAheadLine = bufferLineNumber;  // next line in 0-based: bufferLineNumber is 1-based, next = +0
 
           for (let i = 0; i < 3; i++) {
             const nextLine = buffer.getLine(lookAheadLine);
@@ -687,7 +681,7 @@ function initTerminal() {
               let completePath = matchedEnd + pathSuffix;
 
               // Look back for path prefix
-              let lookbackLine = bufferLineNumber - 1;
+              let lookbackLine = bufferLineNumber - 2;  // prev line in 0-based: bufferLineNumber is 1-based, prev = -2
               let pathPrefix = '';
 
               const isFirstPartAbsolute = /^[A-Za-z]:/.test(matchedEnd) || /^[.\/]/.test(matchedEnd);
@@ -834,7 +828,7 @@ function initTerminal() {
           const isAbsolutePath = /^[A-Za-z]:/.test(matchedPath) || /^[.\/]/.test(matchedPath);
 
           if (!isAbsolutePath) {
-            let lookbackLine = bufferLineNumber - 1;
+            let lookbackLine = bufferLineNumber - 2;  // prev line in 0-based: bufferLineNumber is 1-based, prev = -2
             let pathPrefix = '';
 
             while (lookbackLine >= 0) {

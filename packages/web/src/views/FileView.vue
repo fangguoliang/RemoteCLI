@@ -454,12 +454,7 @@ onMounted(async () => {
     const activeTabAgent = activeTab ? agents.value.find(a => a.agentId === activeTab.agentId) : null;
     const activeTabCwdBefore = terminalStore.getActiveTabCwd();
 
-    console.log('[FileView][DEBUG] activeTab found:', activeTab ? { id: activeTab.id, agentId: activeTab.agentId } : 'null');
-    console.log('[FileView][DEBUG] activeTabAgent:', activeTabAgent ? { agentId: activeTabAgent.agentId, online: activeTabAgent.online } : 'null');
-    console.log('[FileView][DEBUG] getActiveTabCwd():', activeTabCwdBefore);
-
     if (activeTab && activeTabAgent?.online) {
-      console.log('[FileView][DEBUG] => branch: activeTab + online agent found, checking CWD');
       if (activeTabCwdBefore) {
         console.log('[FileView][DEBUG] => branch: CWD available immediately →', activeTabCwdBefore);
         selectedAgentId.value = activeTab.agentId;

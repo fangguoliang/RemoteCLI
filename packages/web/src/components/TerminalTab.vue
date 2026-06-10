@@ -349,6 +349,28 @@ function forceScrollToBottom() {
   }
 }
 
+// Build a mapping from string index to cell position for a terminal line.
+// translateToString(true) skips trail cells of fullwidth characters (e.g., Chinese),
+// so string index != cell position when fullwidth chars are present.
+// Returns an array where result[strIdx] = cellPos.
+function buildStringToCellMap(line: any, lineText: string): number[] {
+  const map: number[] = [];
+  let cellPos = 0;
+  for (let strIdx = 0; strIdx < lineText.length; strIdx++) {
+    map[strIdx] = cellPos;
+    const cell = line.getCell(cellPos);
+    if (!cell) break;
+    const w = cell.getWidth();
+    // Fullwidth chars (w=2) occupy 2 cells but 1 string position
+    // Normal chars (w=1) occupy 1 cell and 1 string position
+    // Trail cells (w=0) are skipped by translateToString
+    cellPos += (w > 0) ? w : 1;
+  }
+  // Add sentinel for end-of-string → cell position
+  map[lineText.length] = cellPos;
+  return map;
+}
+
 // Check if terminal is scrolled to bottom
 function isScrolledToBottom(): boolean {
   if (!terminal) return true;
@@ -469,6 +491,9 @@ function initTerminal() {
           return;
         }
 
+        // Build string-index → cell-position mapping (handles fullwidth chars like Chinese)
+        const strToCell = buildStringToCellMap(line, lineText);
+
         const foundLinks: any[] = [];
 
         // Match .md file paths (Windows absolute, relative, Unix-style, bare filenames)
@@ -553,10 +578,14 @@ function initTerminal() {
           console.log('[MD LinkProvider] Found match:', filePath, 'completePath:', completePath, 'at bufferLineNumber', bufferLineNumber);
           console.log('[MD LinkProvider] Creating link with y = bufferLineNumber =', bufferLineNumber);
 
+          // Convert string indices to cell positions (handles fullwidth chars like Chinese)
+          const cellStart = strToCell[matchStart] ?? matchStart;
+          const cellEnd = strToCell[matchEnd] ?? matchEnd;
+
           foundLinks.push({
             range: {
-              start: { x: matchStart + 1, y: bufferLineNumber },
-              end: { x: matchEnd, y: bufferLineNumber },
+              start: { x: cellStart, y: bufferLineNumber },
+              end: { x: cellEnd, y: bufferLineNumber },
             },
             text: matchedText,
             decorations: {
@@ -634,10 +663,13 @@ function initTerminal() {
                   const lineLength = lineText.length;
                   console.log('[MD LinkProvider] Reverse link coords: x:', suffixStart + 1, 'to', lineLength, 'y:', bufferLineNumber, 'suffixPart:', suffixPart);
 
+                  const suffixCellStart = strToCell[suffixStart] ?? suffixStart;
+                  const lineLengthCell = strToCell[lineText.length] ?? lineText.length;
+
                   foundLinks.push({
                     range: {
-                      start: { x: suffixStart + 1, y: bufferLineNumber },
-                      end: { x: lineLength, y: bufferLineNumber },
+                      start: { x: suffixCellStart, y: bufferLineNumber },
+                      end: { x: lineLengthCell, y: bufferLineNumber },
                     },
                     text: lineText.substring(suffixStart), // Include trailing whitespace
                     decorations: { underline: true, pointerCursor: true },
@@ -728,10 +760,12 @@ function initTerminal() {
               console.log('[MD LinkProvider] Forward link coords: x:', matchStart + 1, 'to', lineText.length, 'y:', bufferLineNumber);
 
               // Create link for the current line portion (the prefix part ending with '.m' or similar)
+              const crossCellStart = strToCell[matchStart] ?? matchStart;
+              const crossLineLengthCell = strToCell[lineText.length] ?? lineText.length;
               foundLinks.push({
                 range: {
-                  start: { x: matchStart + 1, y: bufferLineNumber },
-                  end: { x: lineText.length, y: bufferLineNumber },
+                  start: { x: crossCellStart, y: bufferLineNumber },
+                  end: { x: crossLineLengthCell, y: bufferLineNumber },
                 },
                 text: matchedEnd,
                 decorations: {
@@ -768,10 +802,12 @@ function initTerminal() {
           const matchStart = urlMatch.index;
           const matchEnd = matchStart + matchedUrl.length;
 
+          const urlCellStart = strToCell[matchStart] ?? matchStart;
+          const urlCellEnd = strToCell[matchEnd] ?? matchEnd;
           foundLinks.push({
             range: {
-              start: { x: matchStart + 1, y: bufferLineNumber },
-              end: { x: matchEnd, y: bufferLineNumber },
+              start: { x: urlCellStart, y: bufferLineNumber },
+              end: { x: urlCellEnd, y: bufferLineNumber },
             },
             text: matchedUrl,
             decorations: {
@@ -798,10 +834,12 @@ function initTerminal() {
           // DirectClick handler will handle the full URL reconstruction
           if (matchEnd >= terminal!.cols - 2 || matchEnd >= lineText.length - 2) continue;
 
+          const fileUrlCellStart = strToCell[matchStart] ?? matchStart;
+          const fileUrlCellEnd = strToCell[matchEnd] ?? matchEnd;
           foundLinks.push({
             range: {
-              start: { x: matchStart + 1, y: bufferLineNumber },
-              end: { x: matchEnd, y: bufferLineNumber },
+              start: { x: fileUrlCellStart, y: bufferLineNumber },
+              end: { x: fileUrlCellEnd, y: bufferLineNumber },
             },
             text: matchedFileUrl,
             decorations: {
@@ -863,10 +901,12 @@ function initTerminal() {
             }
           }
 
+          const htmlCellStart = strToCell[matchStart] ?? matchStart;
+          const htmlCellEnd = strToCell[matchEnd] ?? matchEnd;
           foundLinks.push({
             range: {
-              start: { x: matchStart + 1, y: bufferLineNumber },
-              end: { x: matchEnd, y: bufferLineNumber },
+              start: { x: htmlCellStart, y: bufferLineNumber },
+              end: { x: htmlCellEnd, y: bufferLineNumber },
             },
             text: matchedPath,
             decorations: {
@@ -903,13 +943,26 @@ function initTerminal() {
     if (!screenEl) return;
 
     // Get the actual rendered text area dimensions
+    // Use xterm's internal css.canvas.width (excludes scrollbar) instead of screenRect.width
+    const xtermCellWidth = (terminal as any)._core?._renderService?.dimensions?.css?.cell?.width;
+    const xtermCellHeight = (terminal as any)._core?._renderService?.dimensions?.css?.cell?.height;
+
     const screenRect = screenEl.getBoundingClientRect();
-    const cellWidth = screenRect.width / cols;
-    const cellHeight = screenRect.height / rows;
+    // Fallback to screenRect if xterm internals unavailable
+    const cellWidth = xtermCellWidth || screenRect.width / cols;
+    const cellHeight = xtermCellHeight || screenRect.height / rows;
 
     // Calculate click position relative to screen element
-    const x = Math.floor((e.clientX - screenRect.left) / cellWidth);
-    const y = Math.floor((e.clientY - screenRect.top) / cellHeight);
+    // Browser truncates MouseEvent.clientX to integer, causing up to 1-pixel error.
+    // Use Math.floor for 0-based column. Match checks use 1-column left tolerance
+    // to compensate for truncation at cell boundaries.
+    const relX = e.clientX - screenRect.left;
+    const relY = e.clientY - screenRect.top;
+    const x = Math.floor(relX / cellWidth);
+    const y = Math.floor(relY / cellHeight);
+
+    // Boundary check
+    if (x < 0 || y < 0 || x >= cols || y >= rows) return;
 
     // Get buffer line - need to account for the scroll position
     const buffer = terminal.buffer.active;
@@ -917,8 +970,7 @@ function initTerminal() {
     const bufferLine = y + baseY;  // Convert screen Y to buffer Y
     const line = buffer.getLine(bufferLine);
 
-    console.log('[DirectClick] screenRect click: x:', x, 'y:', y, 'baseY:', baseY, 'bufferLine:', bufferLine);
-
+    console.log('[DirectClick] x:', x, 'y:', y, 'bufferLine:', bufferLine);
 
     if (!line) {
       return;
@@ -926,21 +978,24 @@ function initTerminal() {
 
     const lineText = line.translateToString(true);
 
-    // 调试：输出点击位置和行内容
-    console.log('[DirectClick] Click at screen x:', x, 'y:', y, 'baseY:', baseY, 'bufferLine:', bufferLine, 'lineText:', lineText.substring(0, 50));
+    // Build string-index → cell-position mapping (handles fullwidth chars like Chinese)
+    const strToCell = buildStringToCellMap(line, lineText);
 
     // Check if click is on a .md file (Windows absolute, relative, Unix-style)
     const mdRegex = /[-a-zA-Z0-9_:.\\\/]+\.md/g;
     let match;
-    console.log('[DirectClick] mdRegex test on lineText:', JSON.stringify(lineText), 'length:', lineText.length);
     while ((match = mdRegex.exec(lineText)) !== null) {
       const matchedPath = match[0];
       const matchStart = match.index;
       const matchEnd = matchStart + matchedPath.length;
-      console.log('[DirectClick] mdRegex match:', JSON.stringify(matchedPath), 'start:', matchStart, 'end:', matchEnd, 'clickX:', x);
+      // Convert string indices to cell positions for comparison with click coordinate x
+      const cellStart = strToCell[matchStart] ?? matchStart;
+      const cellEnd = strToCell[matchEnd] ?? matchEnd;
+      console.log('[DirectClick] mdRegex match:', JSON.stringify(matchedPath), 'cellStart:', cellStart, 'cellEnd:', cellEnd, 'x:', x);
 
-      // Check if click is within this match (x is 0-based column)
-      if (x >= matchStart && x < matchEnd) {
+      // Check if click is within this match (x is 0-based cell position)
+      // Allow 1-column left tolerance to compensate for browser integer truncation of clientX
+      if (x >= cellStart - 1 && x < cellEnd) {
         // Try to build complete path for multi-line paths
         let completePath = matchedPath;
         const isAbsolutePath = /^[A-Za-z]:/.test(matchedPath) || /^[.\/]/.test(matchedPath);
@@ -1030,12 +1085,16 @@ function initTerminal() {
         console.log('[DirectClick] file:// URL wrapped, reconstructed:', fullUrl);
       }
 
-      fileUrlsOnLine.push({ url: fullUrl, start: fileUrlMatch.index, end: matchEnd });
+      fileUrlsOnLine.push({
+        url: fullUrl,
+        start: strToCell[fileUrlMatch.index] ?? fileUrlMatch.index,
+        end: strToCell[matchEnd] ?? matchEnd
+      });
     }
 
     for (const fu of fileUrlsOnLine) {
       console.log('[DirectClick] fileUrlRegex match:', JSON.stringify(fu.url), 'start:', fu.start, 'end:', fu.end, 'clickX:', x, 'cols:', terminal.cols);
-      if (x >= fu.start && x < fu.end) {
+      if (x >= fu.start - 1 && x < fu.end) {
         console.log('[DirectClick] Click inside file:// URL, path:', fu.url);
         handleHtmlPathClick(fu.url);
         e.stopPropagation();
@@ -1060,8 +1119,10 @@ function initTerminal() {
       const matchedPath = htmlFileMatch[0];
       const matchStart = htmlFileMatch.index;
       const matchEnd = matchStart + matchedPath.length;
-      console.log('[DirectClick] htmlFileRegex match:', JSON.stringify(matchedPath), 'start:', matchStart, 'end:', matchEnd, 'clickX:', x);
-      if (x >= matchStart && x < matchEnd) {
+      const htmlCellStart = strToCell[matchStart] ?? matchStart;
+      const htmlCellEnd = strToCell[matchEnd] ?? matchEnd;
+      console.log('[DirectClick] htmlFileRegex match:', JSON.stringify(matchedPath), 'cellStart:', htmlCellStart, 'cellEnd:', htmlCellEnd, 'x:', x);
+      if (x >= htmlCellStart - 1 && x < htmlCellEnd) {
         // Check if this might be a continuation of a file:// URL from the previous line
         const prevLine = buffer.getLine(bufferLine - 1);
         if (prevLine) {
@@ -1097,9 +1158,10 @@ function initTerminal() {
     if (continuationMatch) {
       const suffixPart = continuationMatch[1];
       const suffixStart = lineText.indexOf(suffixPart);
+      const suffixCellStart = strToCell[suffixStart] ?? suffixStart;
 
-      // Check if click is within the suffix area
-      if (x >= suffixStart) {
+      // Check if click is within the suffix area (with 1-col left tolerance)
+      if (x >= suffixCellStart - 1) {
         // Look back at previous line for path prefix
         const prevLineNum = bufferLine - 1;
         const prevLine = buffer.getLine(prevLineNum);

@@ -207,10 +207,11 @@ function setupVisualViewportHandling(): (() => void) | null {
       // This makes the terminal shrink instead of being pushed up
       terminalPage.style.bottom = `${keyboardHeight}px`;
 
-      // Fit terminal to new size after a brief delay
-      setTimeout(doFitAndScroll, 50);
-      setTimeout(doFitAndScroll, 150);
-      setTimeout(doFitAndScroll, 300);
+      // [debug-loop] fix: single debounced fit instead of 3 redundant setTimeout calls.
+      // Multiple fit() calls cause PSReadLine to re-render multiple times, corrupting
+      // the display at line wrap points (characters dropped at wrap boundary).
+      // TerminalTab's own viewport handler (100ms debounce) handles subsequent adjustments.
+      setTimeout(doFitAndScroll, 100);
     }, 20);
   };
 

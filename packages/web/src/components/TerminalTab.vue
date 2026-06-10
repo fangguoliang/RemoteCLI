@@ -1710,9 +1710,9 @@ function setupVisualViewportHandling() {
         safeFit();
         // Scroll cursor into view after resize
         forceScrollToBottom();
-
-        // Force xterm to refresh by writing empty string (triggers internal refresh)
-        terminal.refresh(0, terminal.rows - 1);
+        // [debug-loop] fix: removed terminal.refresh(0, terminal.rows - 1) — this non-public API
+        // forces a synchronous re-render that races with xterm's async write pipeline,
+        // causing characters to be dropped from the display during typing on mobile.
       }, 100);
     }
   };

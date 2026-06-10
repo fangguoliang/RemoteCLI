@@ -512,6 +512,36 @@ function initTerminal() {
           const matchStart = matchResult.index;
           const matchEnd = matchStart + matchedText.length;
 
+          // Heuristic: if quoted match contains multiple .md extensions,
+          // it's likely multiple files, not one file with spaces.
+          // Split into individual file matches using bare filename regex.
+          if (matchResult[2]) {
+            const mdCount = (filePath.match(/\.md/gi) || []).length;
+            if (mdCount > 1) {
+              // Re-match individual files within the quoted content
+              const innerBareRegex = /[-a-zA-Z0-9_一-鿿.]+\.md/g;
+              let innerMatch;
+              while ((innerMatch = innerBareRegex.exec(filePath)) !== null) {
+                const innerPath = innerMatch[0];
+                const innerStrStart = matchResult.index + 1 + innerMatch.index; // +1 for quote
+                const innerStrEnd = innerStrStart + innerPath.length;
+                const innerCellStart = strToCell[innerStrStart] ?? innerStrStart;
+                const innerCellEnd = strToCell[innerStrEnd] ?? innerStrEnd;
+
+                foundLinks.push({
+                  range: {
+                    start: { x: innerCellStart, y: bufferLineNumber },
+                    end: { x: innerCellEnd, y: bufferLineNumber },
+                  },
+                  text: innerPath,
+                  decorations: { underline: true, pointerCursor: true },
+                  activate() { handleMdPathClick(innerPath); },
+                });
+              }
+              continue; // Skip the original quoted match
+            }
+          }
+
           // Try to build complete path by looking at previous lines
           let completePath = filePath;
 

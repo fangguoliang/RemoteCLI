@@ -24,14 +24,14 @@ const MIME_TYPES: Record<string, string> = {
   '.ttf': 'font/ttf',
 };
 
-export async function handleHttpRequest(ws: WebSocket, message: Message) {
+export async function handleHttpRequest(ws: WebSocket, message: Message, cwd?: string | null) {
   const payload = message.payload as HttpRequestPayload;
   const sessionId = message.sessionId;
   const { requestId, url, method, headers, body } = payload;
 
   // Check if this is a file:// URL (local HTML file)
   if (url.startsWith('file://')) {
-    await handleFileRequest(ws, sessionId, requestId, url);
+    await handleFileRequest(ws, sessionId, requestId, url, cwd);
     return;
   }
 
@@ -110,7 +110,7 @@ export async function handleHttpRequest(ws: WebSocket, message: Message) {
 }
 
 // Handle file:// URL requests (local HTML files)
-async function handleFileRequest(ws: WebSocket, sessionId: string | undefined, requestId: string, fileUrl: string) {
+async function handleFileRequest(ws: WebSocket, sessionId: string | undefined, requestId: string, fileUrl: string, cwd?: string | null) {
   try {
     // Convert file:// URL to local path
     // file:///C:/path/to/file.html -> C:\path\to\file.html
@@ -122,6 +122,18 @@ async function handleFileRequest(ws: WebSocket, sessionId: string | undefined, r
     // On Windows, convert forward slashes to backslashes
     if (process.platform === 'win32') {
       localPath = localPath.replace(/\//g, '\\');
+    }
+
+    // [debug-loop] fix: resolve relative paths using session CWD
+    // When frontend CWD parsing fails (e.g. Claude Code TUI), the file URL
+    // may contain only a relative path like file:///poster.html
+    if (!localPath.match(/^[A-Za-z]:/)) {
+      if (cwd) {
+        localPath = path.resolve(cwd, localPath);
+        console.log('[Agent] Resolved relative path using CWD:', localPath);
+      } else {
+        console.warn('[Agent] Relative path but no CWD available:', localPath);
+      }
     }
 
     console.log('[Agent] handleFileRequest:', fileUrl, '->', localPath);

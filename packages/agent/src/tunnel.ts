@@ -138,7 +138,8 @@ export class Tunnel {
           break;
 
         case 'http:request':
-          handleHttpRequest(this.ws!, message);
+          // [debug-loop] fix: pass session CWD so agent can resolve relative file paths
+          handleHttpRequest(this.ws!, message, sessionId ? this.ptyManager.getWorkingDirectory(sessionId) : null);
           break;
       }
     } catch (err) {

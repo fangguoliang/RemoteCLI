@@ -573,21 +573,39 @@ function initTerminal() {
                 const endIndex = pathEndMatch.index ?? 0;
                 console.log('[MD LinkProvider] Found pathEndMatch:', endPart, 'at index', endIndex);
 
+                // [debug-loop] fix: If the previous line's end already has a file extension
+                // (e.g., "pnpm-workspace.yaml"), it's a complete separate file in a directory listing,
+                // not a directory path prefix for the current file. Skip concatenation.
+                // Exception: if it ends with .md, it could be a soft-wrapped .md path that we need
+                // to continue building (handled by the cross-line detection below, not here).
+                const prevHasFileExtension = /\.[a-zA-Z0-9]{1,10}$/.test(endPart) && !endPart.endsWith('.md');
+                if (prevHasFileExtension) {
+                  console.log('[MD LinkProvider] Previous line end has file extension, skipping lookback (separate file listing)');
+                  break;
+                }
+
                 // Check if there's a separator before the path chars
                 if (endIndex > 0) {
                   const charBefore = prevText[endIndex - 1];
                   console.log('[MD LinkProvider] charBefore:', charBefore);
                   if (isPathSeparator(charBefore, endPart)) {
                     // Found separator - this is the start of the path
+                    // [debug-loop] fix: Ensure path separator between endPart and filePath
+                    // If endPart doesn't end with \ or /, add one
+                    const needsSep = !/[\\\/]$/.test(endPart);
+                    const separator = needsSep ? '\\' : '';
                     pathPrefix = endPart + pathPrefix;
-                    completePath = pathPrefix + filePath;
-                    console.log('[MD LinkProvider] Found separator, complete path:', completePath);
+                    completePath = pathPrefix + separator + filePath;
+                    console.log('[debug-loop] fix: Found separator, complete path:', completePath);
                     break;
                   }
                 }
 
                 // No separator - continue building path
-                pathPrefix = endPart + pathPrefix;
+                // [debug-loop] fix: If endPart doesn't end with separator, add one
+                const needsSep = !/[\\\/]$/.test(endPart);
+                const separator = needsSep ? '\\' : '';
+                pathPrefix = endPart + separator + pathPrefix;
                 console.log('[MD LinkProvider] No separator, continuing. pathPrefix now:', pathPrefix);
                 lookbackLine--;
               } else {

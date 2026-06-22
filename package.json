@@ -10,7 +10,8 @@
   "scripts": {
     "dev": "pnpm -r run dev",
     "build": "pnpm -r run build",
-    "test": "pnpm -r run test"
+    "test": "pnpm -r run test",
+    "gen:action-map": "tsx scripts/generate-action-map.ts"
   },
   "devDependencies": {
     "playwright": "^1.60.0",

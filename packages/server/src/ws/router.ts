@@ -4,6 +4,7 @@ import { webcrypto } from 'crypto';
 import { tunnelManager } from './tunnel.js';
 import { agentModel, userModel, agentPermissionModel } from '../db/index.js';
 import { handleHttpResponse } from '../proxy/index.js';
+import { voiceAgentManager } from '../index.js';
 
 const crypto = webcrypto;
 
@@ -180,19 +181,31 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
       break;
 
     case 'voice:start':
-      // Browser starts voice session - handled by VoiceAgentManager
+      // Browser starts voice session
+      if (!isAgent && voiceAgentManager) {
+        const browser = tunnelManager.getBrowser(ws);
+        if (browser?.agentId) {
+          voiceAgentManager.createSession(ws, browser.agentId);
+        }
+      }
       break;
 
     case 'voice:audio':
-      // Browser sends audio chunk - handled by VoiceAgentManager
+      // Browser sends audio chunk - handled by binary message handler in ws/index.ts
       break;
 
     case 'voice:vad-state':
       // Browser VAD state - handled by VoiceAgentManager
+      if (!isAgent && voiceAgentManager && payload?.speaking === false) {
+        voiceAgentManager.handleVadEnd(ws);
+      }
       break;
 
     case 'voice:end':
-      // Browser ends voice session - handled by VoiceAgentManager
+      // Browser ends voice session
+      if (!isAgent && voiceAgentManager) {
+        voiceAgentManager.removeSession(ws);
+      }
       break;
 
     case 'voice:send':
@@ -203,14 +216,16 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
     case 'voice:action-result':
     case 'voice:interpret-error':
       // Agent returns voice interpretation result
-      if (isAgent && payload?.voiceSessionId) {
-        // Route directly to originating browser via VoiceAgentManager
-        // This is handled in index.ts where voiceAgentManager is available
+      if (isAgent && payload?.voiceSessionId && voiceAgentManager) {
+        voiceAgentManager.routeToOriginatingBrowser(payload.voiceSessionId, message);
       }
       break;
 
     case 'ui:state-sync':
-      // Browser sends UI state for LLM context - handled by VoiceAgentManager
+      // Browser sends UI state for LLM context
+      if (!isAgent && voiceAgentManager) {
+        voiceAgentManager.updateUIState(ws, payload);
+      }
       break;
 
     default:

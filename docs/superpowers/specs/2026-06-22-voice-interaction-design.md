@@ -32,9 +32,9 @@
 |------|------|------|
 | **STT** | Groq Whisper API | OpenAI 兼容接口，免费额度大，流式返回 |
 | **TTS** | Edge-TTS (edge-tts) | 微软 TTS 引擎，完全免费，中文音质好 |
-| **LLM 意图/命令** | 百炼 Coding Plan (Qwen) | 复用现有套餐，用于命令翻译和意图识别 |
+| **LLM 意图/命令** | Agent 端持久化 Claude Code 会话 | 复用 Coding Plan，Agent spawn 独立后台 `claude` 进程处理语音命令 |
 | **音频传输** | WebSocket + PCM | 前端录音编码，server 转发 |
-| **架构** | 服务端语音代理（Approach A） | 所有语音处理集中在 server 端 |
+| **架构** | 服务端语音代理 + Agent 端 LLM | STT/TTS 在 server，LLM 意图识别在 agent |
 
 ### 2.1 为什么不用百炼 STT/TTS
 
@@ -60,7 +60,7 @@
 └─────────────────────────────────┬───────────────────────────────┘
                                   │
 ┌─────────────────────────────────▼───────────────────────────────┐
-│                   remotecli server (Fastify)                     │
+│                   remotecli server (Fastify, Linux)              │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │              VoiceAgent 模块 (新增)                       │   │
 │  │                                                          │   │
@@ -68,14 +68,39 @@
 │  │     ↓                                                    │   │
 │  │  CommandRouter:                                          │   │
 │  │     • 命令词典匹配（UI 导航，快速路径）                    │   │
-│  │     • LLM 翻译（终端命令 + 兜底）                         │   │
+│  │     • 未命中 → 转发文字到 Agent 端处理                    │   │
 │  │     ↓                                                    │   │
 │  │  ActionExecutor: 执行动作（终端/文件管理器/Claude/UI）     │   │
 │  │     ↓                                                    │   │
 │  │  TTSService (Edge-TTS) → 音频 → 回传浏览器播放           │   │
 │  └──────────────────────────────────────────────────────────┘   │
+│                         │ WebSocket                              │
+│                         │ voice:interpret                        │
+└─────────────────────────┼───────────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────────┐
+│                   remotecli agent (Windows)                      │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │           VoiceLLM 模块 (新增)                            │   │
+│  │                                                          │   │
+│  │  收到 voice:interpret → 转发到持久化 Claude Code 会话     │   │
+│  │     ↓                                                    │   │
+│  │  Claude Code 后台进程 (独立于用户终端会话)                 │   │
+│  │     • spawn: claude --print --output-format stream-json   │   │
+│  │     • stdin 写入语音文字 + 环境上下文                      │   │
+│  │     • stdout 读取 JSON 动作指令                            │   │
+│  │     ↓                                                    │   │
+│  │  解析结果 → 回报 Server (voice:action-result)             │   │
+│  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### 2.2 LLM 调用为什么走 Agent 端
+
+- 百炼 Coding Plan API Key（`sk-sp-*`）只接受 Claude Code 等编程工具的请求
+- Server 端代码无法直接调用 Coding Plan API
+- Agent 端已有 `claude` CLI 环境，spawn 子进程即可使用 Coding Plan
+- 参考 nsdscripter 项目的 `ClaudeExecutor` 模式
 
 ### 3.1 核心组件
 
@@ -86,10 +111,12 @@
 | **AudioPlayer** | 前端 | 接收 TTS 音频、解码播放、队列管理 |
 | **VoiceAgent** | server | 语音代理主模块，协调 STT/命令路由/TTS |
 | **STTService** | server | 调用 Groq Whisper API，流式返回文字 |
-| **CommandRouter** | server | 词典匹配 + LLM 翻译/意图识别 |
+| **CommandRouter** | server | 词典匹配（快速路径）+ 未命中时转发到 Agent |
 | **ActionExecutor** | server | 执行动作：注入终端、操作文件管理器、Claude 对话、UI 导航 |
 | **TTSService** | server | 调用 Edge-TTS，生成反馈语音 |
 | **ActionMapGenerator** | server/构建 | 扫描 Vue 源码生成 UI 动作地图 |
+| **VoiceLLM** | agent | 持久化 Claude Code 会话，处理语音命令意图识别 |
+| **ClaudeBackground** | agent | 后台 `claude` CLI 进程，独立于用户终端会话 |
 
 ---
 
@@ -173,19 +200,31 @@
 ### 5.1 三层处理架构
 
 ```
-用户说话 → STT 转文字
+用户说话 → STT 转文字 (Server, Groq Whisper)
               │
               ▼
-         CommandRouter
+         CommandRouter (Server)
               │
-    ┌─────────┼──────────┐
-    ▼         ▼          ▼
- UI 命令    终端命令    Claude 输入
- (词典匹配)  (LLM 翻译)  (直接转发)
-    │         │          │
-    ▼         ▼          ▼
- 执行UI    注入终端     发送给
- 动作      执行命令     Claude
+    ┌─────────┴──────────┐
+    ▼                    ▼
+ 词典命中?             词典未命中
+    │                    │
+    ▼                    ▼
+ 直接执行 UI 动作    转发到 Agent (voice:interpret)
+    │                    │
+    │                    ▼
+    │              VoiceLLM (Agent)
+    │                    │
+    │                    ▼
+    │              Claude Code 后台进程
+    │              (意图识别 + 命令翻译)
+    │                    │
+    │                    ▼
+    │              回报 Server (voice:action-result)
+    │                    │
+    └────────┬───────────┘
+             ▼
+      ActionExecutor (Server) 执行动作
 ```
 
 ### 5.2 第一层：命令词典（UI 导航）
@@ -259,7 +298,65 @@ LLM 返回 (PowerShell):
 4. 用户想和 Claude 对话时返回 type: "claude_prompt"
 ```
 
-### 5.4 安全机制
+### 5.4 Agent 端持久化 Claude Code 会话
+
+Agent 端维护一个独立的后台 Claude Code 进程，专门处理语音命令的意图识别和命令翻译。
+
+**启动方式（参考 nsdscripter ClaudeExecutor）：**
+
+```typescript
+// Agent 启动时 spawn 持久化 Claude Code 进程
+const claudeProcess = spawn('claude', [
+  '--dangerously-skip-permissions',
+  '--output-format', 'stream-json',
+  '--verbose',
+], {
+  cwd: agentWorkDir,
+  env: { ...process.env, FORCE_COLOR: '1' },
+  stdio: ['pipe', 'pipe', 'pipe'],
+});
+```
+
+**交互协议：**
+
+```
+Server → Agent:  { type: "voice:interpret", payload: {
+                    text: "查看哪个进程占用了 8080 端口",
+                    context: { terminal_type: "powershell", os: "windows", cwd: "C:\\...", action_map: [...] }
+                  }}
+
+Agent → Claude stdin:  (写入结构化 prompt)
+  ---VOICE-COMMAND---
+  当前环境: terminal_type=powershell, os=windows, cwd=C:\Users\Admin
+  可用动作: [navigate_file_view, terminal_scroll, ...]
+  用户语音: "查看哪个进程占用了 8080 端口"
+  请输出 JSON 动作指令。
+  ---END---
+
+Claude stdout → Agent:  (读取 stream-json 输出)
+  { "type": "result", "content": "{\"action_id\":\"terminal_execute\",\"params\":{\"command\":\"Get-NetTCPConnection -LocalPort 8080\"},\"dangerous\":false}" }
+
+Agent → Server:  { type: "voice:action-result", payload: {
+                    action_id: "terminal_execute",
+                    params: { command: "Get-NetTCPConnection -LocalPort 8080" },
+                    dangerous: false,
+                    explanation: "查看占用8080端口的进程"
+                  }}
+```
+
+**会话管理：**
+- Agent 启动时创建，随 Agent 生命周期存活
+- 进程崩溃时自动重启（最多 3 次，间隔递增）
+- 空闲超过 10 分钟无请求时不关闭（保持 warm，避免冷启动延迟）
+- 每次请求通过 stdin 写入分隔标记，stdout 读取 stream-json 解析
+
+**与用户终端 Claude Code 会话的关系：**
+- 完全独立，互不干扰
+- 用户的 Claude Code 在 PTY 中交互式运行
+- 语音专用 Claude Code 是后台非交互进程（`--print` 模式或 stdin 管道模式）
+- 两者共享同一个 Coding Plan 配额
+
+### 5.5 安全机制
 
 LLM 标记 `dangerous: true` 的命令，前端弹窗确认：
 
@@ -443,6 +540,27 @@ const VAD_DEFAULTS = {
 { type: "voice:error", payload: { code: "stt_failed", message: "..." } }
 ```
 
+**Server ↔ Agent（语音 LLM 交互）：**
+
+```typescript
+// Server → Agent
+{ type: "voice:interpret", payload: {
+  text: "查看哪个进程占用了 8080 端口",
+  context: { terminal_type: "powershell", os: "windows", cwd: "C:\\..." }
+}}
+
+// Agent → Server
+{ type: "voice:action-result", payload: {
+  action_id: "terminal_execute",
+  params: { command: "Get-NetTCPConnection -LocalPort 8080" },
+  dangerous: false,
+  explanation: "查看占用8080端口的进程"
+}}
+
+// Agent → Server (错误)
+{ type: "voice:interpret-error", payload: { code: "claude_timeout", message: "..." }}
+```
+
 ---
 
 ## 9. TTS 反馈策略
@@ -540,7 +658,9 @@ ActionExecutor
 | 麦克风权限拒绝 | 悬浮条文字提示 "请授权麦克风" |
 | LLM 返回无法解析 | 悬浮条显示 "无法理解，请换个说法" |
 | LLM 返回畸形 JSON | 重试一次（附加 "请严格输出 JSON" 提示），仍失败则回退为终端原始输入 |
-| LLM API 超时 | 悬浮条显示 "思考中..." 超时后回退为终端原始输入 |
+| LLM API 超时（10s） | 悬浮条显示 "思考中..." 超时后回退为终端原始输入 |
+| Agent 端 Claude Code 进程崩溃 | 自动重启，期间语音命令降级为纯词典模式 |
+| Server ↔ Agent 通信超时 | 回退为终端原始输入，悬浮条提示 "语音智能暂时不可用" |
 | WebSocket 断开 | 自动重连，悬浮条显示 "连接中..." |
 | 网络不稳定 | 音频本地缓存，恢复后重传 |
 
@@ -561,9 +681,9 @@ voice:
     voice: "zh-CN-XiaoxiaoNeural"
     rate: "+10%"
   llm:
-    provider: "bailian"
-    api_key: "${BAILIAN_API_KEY}"  # Coding Plan key
-    model: "qwen3-coder-plus"
+    provider: "claude-code"         # 通过 Agent 端 claude CLI 调用
+    timeout_ms: 10000               # LLM 响应超时
+    max_retries: 2                  # 失败重试次数
   vad:
     command_silence_ms: 800
     terminal_command_silence_ms: 1200

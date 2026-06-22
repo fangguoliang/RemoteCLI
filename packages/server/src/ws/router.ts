@@ -179,6 +179,40 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
       handleHttpResponse(message);
       break;
 
+    case 'voice:start':
+      // Browser starts voice session - handled by VoiceAgentManager
+      break;
+
+    case 'voice:audio':
+      // Browser sends audio chunk - handled by VoiceAgentManager
+      break;
+
+    case 'voice:vad-state':
+      // Browser VAD state - handled by VoiceAgentManager
+      break;
+
+    case 'voice:end':
+      // Browser ends voice session - handled by VoiceAgentManager
+      break;
+
+    case 'voice:send':
+    case 'voice:cancel':
+      // Input mode controls - handled by VoiceAgentManager
+      break;
+
+    case 'voice:action-result':
+    case 'voice:interpret-error':
+      // Agent returns voice interpretation result
+      if (isAgent && payload?.voiceSessionId) {
+        // Route directly to originating browser via VoiceAgentManager
+        // This is handled in index.ts where voiceAgentManager is available
+      }
+      break;
+
+    case 'ui:state-sync':
+      // Browser sends UI state for LLM context - handled by VoiceAgentManager
+      break;
+
     default:
       break;
   }

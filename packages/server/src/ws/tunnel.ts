@@ -72,6 +72,9 @@ class TunnelManager {
   disconnectBrowser(ws: WebSocket) {
     const browser = this.browsers.get(ws);
     if (browser) {
+      // Clean up voice session (handled in index.ts where voiceAgentManager is available)
+      // voiceAgentManager?.removeSession(ws);
+
       // Clean up agentBrowsers mapping
       if (browser.agentId) {
         const browserSet = this.agentBrowsers.get(browser.agentId);

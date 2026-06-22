@@ -5,15 +5,34 @@ import { FileManager } from './file.js';
 import { getAgentName } from './shell.js';
 import { validateFilePath } from './validation.js';
 import { handleHttpRequest } from './httpHandler.js';
+import { VoiceLLM, type VoiceInterpretPayload } from './voiceLLM.js';
 import type { FileValidatePayload } from '@remotecli/shared';
 
 export class Tunnel {
   private ws: WebSocket | null = null;
   private ptyManager = new PtyManager();
   private fileManager = new FileManager();
+  private voiceLLM: VoiceLLM | null = null;
   private uploadSessions = new Map<string, string>(); // sessionId -> uploadId
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+
+  initVoiceLLM(): void {
+    console.log('[Tunnel] Initializing VoiceLLM...');
+    this.voiceLLM = new VoiceLLM();
+
+    this.voiceLLM.on('error', (err: Error) => {
+      console.error('[Tunnel] VoiceLLM error:', err.message);
+      // Send error notification if WebSocket is open
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.send({
+          type: 'voice:error',
+          payload: { message: err.message },
+          timestamp: Date.now(),
+        });
+      }
+    });
+  }
 
   connect() {
     console.log(`Connecting to ${config.serverUrl}...`);
@@ -140,6 +159,10 @@ export class Tunnel {
         case 'http:request':
           // [debug-loop] fix: pass session CWD so agent can resolve relative file paths
           handleHttpRequest(this.ws!, message, sessionId ? this.ptyManager.getWorkingDirectory(sessionId) : null);
+          break;
+
+        case 'voice:interpret':
+          this.handleVoiceInterpret(payload, sessionId);
           break;
       }
     } catch (err) {
@@ -372,6 +395,52 @@ export class Tunnel {
       payload: result,
       timestamp: Date.now(),
     });
+  }
+
+  private async handleVoiceInterpret(payload: unknown, sessionId?: string): Promise<void> {
+    if (!this.voiceLLM) {
+      this.send({
+        type: 'voice:interpret-error',
+        sessionId,
+        payload: { message: 'VoiceLLM not initialized' },
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    if (!sessionId) {
+      this.send({
+        type: 'voice:interpret-error',
+        payload: { message: 'No session ID provided' },
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    const voicePayload = payload as VoiceInterpretPayload;
+
+    try {
+      const result = await this.voiceLLM.interpret({
+        sessionId,
+        text: voicePayload.text,
+      });
+
+      this.send({
+        type: 'voice:action-result',
+        sessionId,
+        payload: result,
+        timestamp: Date.now(),
+      });
+    } catch (err: unknown) {
+      const error = err as Error;
+      console.error('[Agent] Voice interpretation error:', error);
+      this.send({
+        type: 'voice:interpret-error',
+        sessionId,
+        payload: { message: error.message },
+        timestamp: Date.now(),
+      });
+    }
   }
 
   private send(message: unknown) {

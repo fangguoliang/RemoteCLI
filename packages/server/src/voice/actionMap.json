@@ -1,0 +1,513 @@
+{
+  "version": "1.0.0",
+  "generatedAt": "2026-06-22T23:40:26.286Z",
+  "actions": [
+    {
+      "id": "navigate:login",
+      "type": "navigation",
+      "description": "Navigate to Login page",
+      "utterances": [
+        "go to login",
+        "open login",
+        "show login"
+      ],
+      "params": {
+        "route": "/login",
+        "name": "Login"
+      },
+      "handler": "router.push"
+    },
+    {
+      "id": "navigate:terminal",
+      "type": "navigation",
+      "description": "Navigate to Terminal page",
+      "utterances": [
+        "go to terminal",
+        "open terminal",
+        "show terminal"
+      ],
+      "params": {
+        "route": "/terminal",
+        "name": "Terminal"
+      },
+      "handler": "router.push"
+    },
+    {
+      "id": "navigate:files",
+      "type": "navigation",
+      "description": "Navigate to Files page",
+      "utterances": [
+        "go to files",
+        "open files",
+        "show files"
+      ],
+      "params": {
+        "route": "/files",
+        "name": "Files"
+      },
+      "handler": "router.push"
+    },
+    {
+      "id": "navigate:settings",
+      "type": "navigation",
+      "description": "Navigate to Settings page",
+      "utterances": [
+        "go to settings",
+        "open settings",
+        "show settings"
+      ],
+      "params": {
+        "route": "/settings",
+        "name": "Settings"
+      },
+      "handler": "router.push"
+    },
+    {
+      "id": "tab:addTab",
+      "type": "terminal",
+      "description": "terminal store action: addTab",
+      "utterances": [
+        "add tab",
+        "manage tab"
+      ],
+      "handler": "stores.terminal.addTab"
+    },
+    {
+      "id": "tab:restoreTab",
+      "type": "terminal",
+      "description": "terminal store action: restoreTab",
+      "utterances": [
+        "restore tab",
+        "manage tab"
+      ],
+      "handler": "stores.terminal.restoreTab"
+    },
+    {
+      "id": "tab:removeTab",
+      "type": "terminal",
+      "description": "terminal store action: removeTab",
+      "utterances": [
+        "remove tab",
+        "manage tab"
+      ],
+      "handler": "stores.terminal.removeTab"
+    },
+    {
+      "id": "tab:setActiveTab",
+      "type": "terminal",
+      "description": "terminal store action: setActiveTab",
+      "utterances": [
+        "set active tab",
+        "manage tab"
+      ],
+      "handler": "stores.terminal.setActiveTab"
+    },
+    {
+      "id": "terminal:sendKeyToActive",
+      "type": "terminal",
+      "description": "terminal store action: sendKeyToActive",
+      "utterances": [
+        "send key to active",
+        "send key"
+      ],
+      "handler": "stores.terminal.sendKeyToActive"
+    },
+    {
+      "id": "terminal:focusActiveTab",
+      "type": "terminal",
+      "description": "terminal store action: focusActiveTab",
+      "utterances": [
+        "focus active tab",
+        "manage tab"
+      ],
+      "handler": "stores.terminal.focusActiveTab"
+    },
+    {
+      "id": "terminal:scrollActiveTabToBottom",
+      "type": "terminal",
+      "description": "terminal store action: scrollActiveTabToBottom",
+      "utterances": [
+        "scroll active tab to bottom",
+        "manage tab"
+      ],
+      "handler": "stores.terminal.scrollActiveTabToBottom"
+    },
+    {
+      "id": "terminal:fitActiveTab",
+      "type": "terminal",
+      "description": "terminal store action: fitActiveTab",
+      "utterances": [
+        "fit active tab",
+        "manage tab"
+      ],
+      "handler": "stores.terminal.fitActiveTab"
+    },
+    {
+      "id": "shortcut:captureCommand",
+      "type": "terminal",
+      "description": "terminal store action: captureCommand",
+      "utterances": [
+        "capture command"
+      ],
+      "handler": "stores.terminal.captureCommand"
+    },
+    {
+      "id": "shortcut:saveShortcut",
+      "type": "terminal",
+      "description": "terminal store action: saveShortcut",
+      "utterances": [
+        "save shortcut"
+      ],
+      "handler": "stores.terminal.saveShortcut"
+    },
+    {
+      "id": "shortcut:deleteShortcut",
+      "type": "terminal",
+      "description": "terminal store action: deleteShortcut",
+      "utterances": [
+        "delete shortcut"
+      ],
+      "handler": "stores.terminal.deleteShortcut"
+    },
+    {
+      "id": "cwd:setTabCwd",
+      "type": "terminal",
+      "description": "terminal store action: setTabCwd",
+      "utterances": [
+        "set tab cwd",
+        "manage tab"
+      ],
+      "handler": "stores.terminal.setTabCwd"
+    },
+    {
+      "id": "file:setPath",
+      "type": "file",
+      "description": "file store action: setPath",
+      "utterances": [
+        "set path",
+        "file operation"
+      ],
+      "handler": "stores.file.setPath"
+    },
+    {
+      "id": "file:setEntries",
+      "type": "file",
+      "description": "file store action: setEntries",
+      "utterances": [
+        "set entries",
+        "file operation"
+      ],
+      "handler": "stores.file.setEntries"
+    },
+    {
+      "id": "file:setLoading",
+      "type": "file",
+      "description": "file store action: setLoading",
+      "utterances": [
+        "set loading",
+        "file operation"
+      ],
+      "handler": "stores.file.setLoading"
+    },
+    {
+      "id": "file:setError",
+      "type": "file",
+      "description": "file store action: setError",
+      "utterances": [
+        "set error",
+        "file operation"
+      ],
+      "handler": "stores.file.setError"
+    },
+    {
+      "id": "transfer:addTransfer",
+      "type": "file",
+      "description": "file store action: addTransfer",
+      "utterances": [
+        "add transfer",
+        "file operation"
+      ],
+      "handler": "stores.file.addTransfer"
+    },
+    {
+      "id": "transfer:updateTransfer",
+      "type": "file",
+      "description": "file store action: updateTransfer",
+      "utterances": [
+        "update transfer",
+        "file operation"
+      ],
+      "handler": "stores.file.updateTransfer"
+    },
+    {
+      "id": "transfer:removeTransfer",
+      "type": "file",
+      "description": "file store action: removeTransfer",
+      "utterances": [
+        "remove transfer",
+        "file operation"
+      ],
+      "handler": "stores.file.removeTransfer"
+    },
+    {
+      "id": "transfer:clearCompletedTransfers",
+      "type": "file",
+      "description": "file store action: clearCompletedTransfers",
+      "utterances": [
+        "clear completed transfers",
+        "file operation"
+      ],
+      "handler": "stores.file.clearCompletedTransfers"
+    },
+    {
+      "id": "viewer:setViewerVisible",
+      "type": "file",
+      "description": "file store action: setViewerVisible",
+      "utterances": [
+        "set viewer visible",
+        "file operation"
+      ],
+      "handler": "stores.file.setViewerVisible"
+    },
+    {
+      "id": "viewer:setViewerContent",
+      "type": "file",
+      "description": "file store action: setViewerContent",
+      "utterances": [
+        "set viewer content",
+        "file operation"
+      ],
+      "handler": "stores.file.setViewerContent"
+    },
+    {
+      "id": "viewer:clearViewer",
+      "type": "file",
+      "description": "file store action: clearViewer",
+      "utterances": [
+        "clear viewer",
+        "file operation"
+      ],
+      "handler": "stores.file.clearViewer"
+    },
+    {
+      "id": "auth:clearTokens",
+      "type": "auth",
+      "description": "auth store action: clearTokens",
+      "utterances": [
+        "clear tokens",
+        "log out",
+        "sign out"
+      ],
+      "handler": "stores.auth.clearTokens"
+    },
+    {
+      "id": "auth:login",
+      "type": "auth",
+      "description": "auth store action: login",
+      "utterances": [
+        "login",
+        "log in",
+        "sign in"
+      ],
+      "handler": "stores.auth.login"
+    },
+    {
+      "id": "auth:refresh",
+      "type": "auth",
+      "description": "auth store action: refresh",
+      "utterances": [
+        "refresh"
+      ],
+      "handler": "stores.auth.refresh"
+    },
+    {
+      "id": "auth:changePassword",
+      "type": "auth",
+      "description": "auth store action: changePassword",
+      "utterances": [
+        "change password"
+      ],
+      "handler": "stores.auth.changePassword"
+    },
+    {
+      "id": "settings:updateSettings",
+      "type": "settings",
+      "description": "settings store action: updateSettings",
+      "utterances": [
+        "update settings"
+      ],
+      "handler": "stores.settings.updateSettings"
+    },
+    {
+      "id": "settings:resetSettings",
+      "type": "settings",
+      "description": "settings store action: resetSettings",
+      "utterances": [
+        "reset settings"
+      ],
+      "handler": "stores.settings.resetSettings"
+    },
+    {
+      "id": "webviewer:setUrl",
+      "type": "navigation",
+      "description": "webViewer store action: setUrl",
+      "utterances": [
+        "set url"
+      ],
+      "handler": "stores.webViewer.setUrl"
+    },
+    {
+      "id": "webviewer:setVisible",
+      "type": "navigation",
+      "description": "webViewer store action: setVisible",
+      "utterances": [
+        "set visible"
+      ],
+      "handler": "stores.webViewer.setVisible"
+    },
+    {
+      "id": "webviewer:setMinimized",
+      "type": "navigation",
+      "description": "webViewer store action: setMinimized",
+      "utterances": [
+        "set minimized"
+      ],
+      "handler": "stores.webViewer.setMinimized"
+    },
+    {
+      "id": "webviewer:setViewport",
+      "type": "navigation",
+      "description": "webViewer store action: setViewport",
+      "utterances": [
+        "set viewport"
+      ],
+      "handler": "stores.webViewer.setViewport"
+    },
+    {
+      "id": "webviewer:clear",
+      "type": "navigation",
+      "description": "webViewer store action: clear",
+      "utterances": [
+        "clear"
+      ],
+      "handler": "stores.webViewer.clear"
+    },
+    {
+      "id": "fileshortcut:saveShortcut",
+      "type": "file",
+      "description": "fileShortcuts store action: saveShortcut",
+      "utterances": [
+        "save shortcut",
+        "file operation"
+      ],
+      "handler": "stores.fileShortcuts.saveShortcut"
+    },
+    {
+      "id": "fileshortcut:deleteShortcut",
+      "type": "file",
+      "description": "fileShortcuts store action: deleteShortcut",
+      "utterances": [
+        "delete shortcut",
+        "file operation"
+      ],
+      "handler": "stores.fileShortcuts.deleteShortcut"
+    },
+    {
+      "id": "fileshortcut:clearAll",
+      "type": "file",
+      "description": "fileShortcuts store action: clearAll",
+      "utterances": [
+        "clear all",
+        "file operation"
+      ],
+      "handler": "stores.fileShortcuts.clearAll"
+    },
+    {
+      "id": "terminal:execute",
+      "type": "terminal",
+      "description": "Execute a command in the terminal",
+      "utterances": [
+        "run command",
+        "execute",
+        "run"
+      ],
+      "params": {
+        "command": "string"
+      },
+      "handler": "pty.execute"
+    },
+    {
+      "id": "terminal:interrupt",
+      "type": "terminal",
+      "description": "Interrupt current terminal operation",
+      "utterances": [
+        "stop",
+        "cancel",
+        "interrupt",
+        "ctrl+c"
+      ],
+      "handler": "pty.interrupt"
+    },
+    {
+      "id": "session:create",
+      "type": "terminal",
+      "description": "Create a new terminal session",
+      "utterances": [
+        "new session",
+        "open terminal",
+        "create session"
+      ],
+      "handler": "session.create"
+    },
+    {
+      "id": "session:close",
+      "type": "terminal",
+      "description": "Close current terminal session",
+      "utterances": [
+        "close session",
+        "exit terminal"
+      ],
+      "handler": "session.close"
+    },
+    {
+      "id": "voice:start-recording",
+      "type": "voice",
+      "description": "Start voice recording",
+      "utterances": [
+        "start listening",
+        "begin recording"
+      ],
+      "handler": "voice.start"
+    },
+    {
+      "id": "voice:stop-recording",
+      "type": "voice",
+      "description": "Stop voice recording",
+      "utterances": [
+        "stop listening",
+        "end recording"
+      ],
+      "handler": "voice.stop"
+    },
+    {
+      "id": "clipboard:copy",
+      "type": "terminal",
+      "description": "Copy selected text to clipboard",
+      "utterances": [
+        "copy text",
+        "copy selection"
+      ],
+      "handler": "clipboard.copy"
+    },
+    {
+      "id": "clipboard:paste",
+      "type": "terminal",
+      "description": "Paste text from clipboard",
+      "utterances": [
+        "paste text",
+        "paste"
+      ],
+      "handler": "clipboard.paste"
+    }
+  ]
+}

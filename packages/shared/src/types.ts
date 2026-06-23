@@ -25,7 +25,24 @@ export type MessageType =
   | 'file:validate'
   | 'file:validated'
   | 'http:request'      // HTTP proxy request
-  | 'http:response';    // HTTP proxy response
+  | 'http:response'     // HTTP proxy response
+  // Voice types
+  | 'voice:start'
+  | 'voice:audio'
+  | 'voice:vad-state'
+  | 'voice:end'
+  | 'voice:send'
+  | 'voice:cancel'
+  | 'voice:interim'
+  | 'voice:final'
+  | 'voice:action'
+  | 'voice:mode'
+  | 'voice:tts'
+  | 'voice:error'
+  | 'voice:interpret'
+  | 'voice:action-result'
+  | 'voice:interpret-error'
+  | 'ui:state-sync';
 
 export interface Message {
   type: MessageType;

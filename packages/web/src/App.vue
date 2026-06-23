@@ -1,9 +1,10 @@
 <template>
   <router-view />
+  <VoiceFloatingBar />
 </template>
 
 <script setup lang="ts">
-// App root component
+import VoiceFloatingBar from './components/VoiceFloatingBar.vue';
 </script>
 
 <style>

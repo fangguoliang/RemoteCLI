@@ -1,0 +1,74 @@
+{
+  "commands": [
+    {
+      "keywords": ["打开文件管理器", "文件管理", "文件浏览", "打开文件"],
+      "action_id": "navigate_file_view",
+      "params": {}
+    },
+    {
+      "keywords": ["切换到终端", "打开终端", "回到终端"],
+      "action_id": "navigate_terminal",
+      "params": {}
+    },
+    {
+      "keywords": ["打开设置", "设置", "配置"],
+      "action_id": "navigate_settings",
+      "params": {}
+    },
+    {
+      "keywords": ["新建会话", "新建终端", "新标签"],
+      "action_id": "terminal_new_session",
+      "params": {}
+    },
+    {
+      "keywords": ["关闭标签", "关闭会话", "关闭当前"],
+      "action_id": "terminal_close_session",
+      "params": {}
+    },
+    {
+      "keywords": ["向上滚动", "往上滚", "滚动上面"],
+      "action_id": "terminal_scroll",
+      "params": { "direction": "up" }
+    },
+    {
+      "keywords": ["向下滚动", "往下滚", "滚动下面"],
+      "action_id": "terminal_scroll",
+      "params": { "direction": "down" }
+    },
+    {
+      "keywords": ["清屏", "清除屏幕"],
+      "action_id": "terminal_clear",
+      "params": {}
+    },
+    {
+      "keywords": ["复制"],
+      "action_id": "terminal_copy",
+      "params": {}
+    },
+    {
+      "keywords": ["粘贴"],
+      "action_id": "terminal_paste",
+      "params": {}
+    },
+    {
+      "keywords": ["上一级", "返回上级", "上级目录"],
+      "action_id": "file_go_up",
+      "params": {}
+    },
+    {
+      "keywords": ["刷新", "刷新列表"],
+      "action_id": "file_refresh",
+      "params": {}
+    },
+    {
+      "keywords": ["停止录音", "停止语音", "关闭语音"],
+      "action_id": "voice_stop",
+      "params": {}
+    },
+    {
+      "keywords": ["最小化", "收起"],
+      "action_id": "voice_minimize",
+      "params": {}
+    }
+  ]
+}

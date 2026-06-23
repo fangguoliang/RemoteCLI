@@ -2,6 +2,7 @@
 import WebSocket, { WebSocketServer } from 'ws';
 import { tunnelManager } from './tunnel.js';
 import { handleMessage } from './router.js';
+import { voiceAgentManager } from '../index.js';
 import type { FastifyInstance } from 'fastify';
 
 export function setupWebSocket(fastify: FastifyInstance) {
@@ -39,18 +40,34 @@ export function setupWebSocket(fastify: FastifyInstance) {
       console.log(`[WS] Browser WebSocket connected from url: ${url}`);
     }
 
-    ws.on('message', (data) => {
-      try {
-        const message = JSON.parse(data.toString());
-        console.log(`[WS] Received message type: ${message.type} from ${isAgent ? 'agent' : 'browser'}`);
-        handleMessage(ws, message, isAgent);
-      } catch (err) {
-        console.error('Failed to parse message:', err);
-        ws.send(JSON.stringify({
-          type: 'error',
-          payload: { error: 'Invalid message format' },
-          timestamp: Date.now(),
-        }));
+    ws.on('message', (data, isBinary) => {
+      if (isBinary && !isAgent && voiceAgentManager) {
+        // Handle binary audio messages
+        // Format: [seq(4 bytes)][audio data]
+        try {
+          const buffer = Buffer.from(data as ArrayBuffer);
+          if (buffer.length > 4) {
+            const seq = buffer.readUInt32LE(0);
+            const audioData = buffer.subarray(4);
+            voiceAgentManager.handleAudioChunk(ws, audioData);
+          }
+        } catch (err) {
+          console.error('Failed to process binary audio message:', err);
+        }
+      } else {
+        // Handle JSON text messages
+        try {
+          const message = JSON.parse(data.toString());
+          console.log(`[WS] Received message type: ${message.type} from ${isAgent ? 'agent' : 'browser'}`);
+          handleMessage(ws, message, isAgent);
+        } catch (err) {
+          console.error('Failed to parse message:', err);
+          ws.send(JSON.stringify({
+            type: 'error',
+            payload: { error: 'Invalid message format' },
+            timestamp: Date.now(),
+          }));
+        }
       }
     });
 
@@ -63,6 +80,8 @@ export function setupWebSocket(fastify: FastifyInstance) {
         }
         console.log('Agent disconnected');
       } else {
+        // Clean up voice session
+        voiceAgentManager?.removeSession(ws);
         tunnelManager.disconnectBrowser(ws);
         console.log('Browser disconnected');
       }

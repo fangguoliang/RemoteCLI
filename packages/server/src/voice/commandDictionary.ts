@@ -21,8 +21,13 @@ export class CommandDictionary {
 
   load() {
     const configPath = join(__dirname, 'commands.json');
-    const data = JSON.parse(readFileSync(configPath, 'utf-8'));
-    this.commands = data.commands || [];
+    try {
+      const data = JSON.parse(readFileSync(configPath, 'utf-8'));
+      this.commands = data.commands || [];
+    } catch {
+      // commands.json is optional - use empty commands if not found
+      this.commands = [];
+    }
   }
 
   match(text: string): DictionaryMatch | null {

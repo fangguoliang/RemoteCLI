@@ -48,6 +48,10 @@ export const useVoiceStore = defineStore('voice', () => {
     }
   }
 
+  function setRecording(recording: boolean) {
+    barState.value = recording ? 'recording' : 'idle';
+  }
+
   function toggleExpand() {
     if (barState.value === 'idle') {
       barState.value = 'recording';
@@ -118,6 +122,7 @@ export const useVoiceStore = defineStore('voice', () => {
     displayText,
     // Actions
     toggleSession,
+    setRecording,
     toggleExpand,
     setInterimText,
     appendToInputBuffer,

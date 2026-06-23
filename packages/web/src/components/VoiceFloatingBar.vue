@@ -89,10 +89,19 @@ import ErrorIcon from './icons/ErrorIcon.vue';
 const voiceStore = useVoiceStore();
 const audioPlayer = useAudioPlayer();
 
-const { start: startRecording, stop: stopRecording, forceVadEnd } = useAudioRecorder({
+const {
+  isRecording: isMicRecording,
+  start: startRecording,
+  stop: stopRecording,
+  forceVadEnd,
+  error: recorderError
+} = useAudioRecorder({
   onAudioChunk: (chunk, seq) => sendVoiceAudio(chunk, seq),
-  onVadStart: () => {},
+  onVadStart: () => {
+    voiceStore.setRecording(true);
+  },
   onVadEnd: (reason) => {
+    voiceStore.setRecording(false);
     sendVoiceVadState(false, reason);
     if (voiceStore.mode === 'command') {
       stopRecording();
@@ -102,22 +111,34 @@ const { start: startRecording, stop: stopRecording, forceVadEnd } = useAudioReco
   silenceThresholdMs: 800,
 });
 
+// Watch for recorder errors
+if (recorderError.value) {
+  voiceStore.setError(recorderError.value);
+}
+
 const statusText = computed(() => {
   if (voiceStore.mode === 'input') return '输入模式 - 说"发送"或点击按钮发送';
   return '正在聆听...';
 });
 
 function handleMicClick() {
-  if (voiceStore.isRecording) {
+  if (isMicRecording.value) {
+    // Stop recording
     forceVadEnd();
     stopRecording();
     sendVoiceEnd();
-    voiceStore.toggleSession();
+    voiceStore.setRecording(false);
     audioPlayer.clear();
   } else {
-    voiceStore.toggleSession();
-    startRecording();
-    sendVoiceStart(16000);
+    // Start recording
+    startRecording().then(() => {
+      if (!recorderError.value) {
+        voiceStore.setRecording(true);
+        sendVoiceStart(16000);
+      } else {
+        voiceStore.setError(recorderError.value);
+      }
+    });
   }
 }
 

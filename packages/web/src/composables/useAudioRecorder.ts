@@ -10,7 +10,7 @@ interface UseAudioRecorderOptions {
 
 export function useAudioRecorder(options: UseAudioRecorderOptions) {
   const isRecording = ref(false);
-  const isSupported = ref(!!navigator.mediaDevices?.getUserMedia);
+  const isSupported = ref(typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia);
   const error = ref<string | null>(null);
 
   let audioContext: AudioContext | null = null;
@@ -24,9 +24,10 @@ export function useAudioRecorder(options: UseAudioRecorderOptions) {
   const ENERGY_THRESHOLD = options.energyThreshold || 0.01;
 
   async function start() {
-    if (!isSupported.value) {
-      error.value = '浏览器不支持麦克风';
-      return;
+    // 动态检查支持
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      error.value = '浏览器不支持麦克风（需要 HTTPS 或 localhost）';
+      return Promise.reject(new Error(error.value));
     }
 
     try {

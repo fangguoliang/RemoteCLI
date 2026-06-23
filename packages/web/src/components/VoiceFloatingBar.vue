@@ -42,7 +42,8 @@
         <!-- 错误状态 -->
         <div v-if="voiceStore.errorText" class="voice-error">
           <ErrorIcon />
-          <span>{{ voiceStore.errorText }}</span>
+          <span class="error-text">{{ voiceStore.errorText }}</span>
+          <button class="error-close-btn" @click="voiceStore.clearError" title="关闭">×</button>
         </div>
 
         <!-- 输入模式控制按钮 -->
@@ -129,20 +130,30 @@ function handleMicClick() {
     sendVoiceEnd();
     voiceStore.setRecording(false);
     audioPlayer.clear();
+    // 不自动收起面板，让用户手动关闭
   } else {
     // Start recording
     startRecording().then(() => {
       if (!recorderError.value) {
         voiceStore.setRecording(true);
         sendVoiceStart(16000);
+        // 开始录音时自动展开面板
+        if (!voiceStore.isExpanded) {
+          voiceStore.toggleExpand();
+        }
       } else {
         voiceStore.setError(recorderError.value);
+        // 有错误时自动展开面板显示错误
+        if (!voiceStore.isExpanded) {
+          voiceStore.toggleExpand();
+        }
       }
     });
   }
 }
 
 function handleLongPress() {
+  // 长按切换面板展开状态
   voiceStore.toggleExpand();
 }
 
@@ -174,10 +185,15 @@ function handleConfirmExecute() {
 <style scoped>
 .voice-container {
   position: fixed;
-  bottom: var(--space-6, 24px);
-  right: var(--space-6, 24px);
+  bottom: calc(48px + var(--space-4, 16px)); /* 底部栏高度(40px+padding) + 间距 */
+  right: var(--space-4, 16px);
   z-index: 9999;
   font-family: inherit;
+  pointer-events: none; /* 让容器不阻挡点击 */
+}
+
+.voice-container > * {
+  pointer-events: auto; /* 子元素恢复点击 */
 }
 
 /* Mini 悬浮按钮 */
@@ -348,6 +364,31 @@ function handleConfirmExecute() {
   border-top: 1px solid rgba(244, 67, 54, 0.2);
   color: var(--error, #f44336);
   font-size: 0.875rem;
+}
+
+.error-text {
+  flex: 1;
+}
+
+.error-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--error, #f44336);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.error-close-btn:hover {
+  background: rgba(244, 67, 54, 0.2);
 }
 
 .voice-bar-actions {

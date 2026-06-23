@@ -1,5 +1,5 @@
 <template>
-  <div v-if="voiceStore.enabled" class="voice-container">
+  <div class="voice-container">
     <!-- 危险操作确认对话框 -->
     <div v-if="voiceStore.pendingConfirm" class="confirm-overlay">
       <div class="confirm-dialog">

@@ -8,8 +8,8 @@ import { adminRoutes } from './routes/admin.js';
 import { setupWebSocket } from './ws/index.js';
 import { startProxyServer } from './proxy/index.js';
 import { VoiceAgentManager } from './voice/voiceAgent.js';
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
+import { readFileSync, existsSync, statSync } from 'fs';
+import { join, dirname, extname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -62,6 +62,119 @@ await fastify.register(adminRoutes);
 
 // Health check
 fastify.get('/api/health', async () => ({ status: 'ok', timestamp: Date.now() }));
+
+// Serve static files from web directory
+const webPath = join(__dirname, '../../web');
+const mimeTypes: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.webmanifest': 'application/manifest+json',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+};
+
+// Explicit routes for common paths
+fastify.get('/', async (request, reply) => {
+  const indexPath = join(webPath, 'index.html');
+  if (existsSync(indexPath)) {
+    reply.header('Content-Type', 'text/html').send(readFileSync(indexPath));
+  } else {
+    reply.code(404).send({ error: 'index.html not found' });
+  }
+});
+
+fastify.get('/login', async (request, reply) => {
+  const indexPath = join(webPath, 'index.html');
+  if (existsSync(indexPath)) {
+    reply.header('Content-Type', 'text/html').send(readFileSync(indexPath));
+  } else {
+    reply.code(404).send({ error: 'index.html not found' });
+  }
+});
+
+fastify.get('/terminal', async (request, reply) => {
+  const indexPath = join(webPath, 'index.html');
+  if (existsSync(indexPath)) {
+    reply.header('Content-Type', 'text/html').send(readFileSync(indexPath));
+  } else {
+    reply.code(404).send({ error: 'index.html not found' });
+  }
+});
+
+fastify.get('/files', async (request, reply) => {
+  const indexPath = join(webPath, 'index.html');
+  if (existsSync(indexPath)) {
+    reply.header('Content-Type', 'text/html').send(readFileSync(indexPath));
+  } else {
+    reply.code(404).send({ error: 'index.html not found' });
+  }
+});
+
+fastify.get('/settings', async (request, reply) => {
+  const indexPath = join(webPath, 'index.html');
+  if (existsSync(indexPath)) {
+    reply.header('Content-Type', 'text/html').send(readFileSync(indexPath));
+  } else {
+    reply.code(404).send({ error: 'index.html not found' });
+  }
+});
+
+// Serve assets and other static files
+fastify.get('/assets/*', async (request, reply) => {
+  const url = request.url.split('?')[0];
+  const filePath = join(webPath, url);
+  if (existsSync(filePath) && statSync(filePath).isFile()) {
+    const ext = extname(filePath);
+    const contentType = mimeTypes[ext] || 'application/octet-stream';
+    const content = readFileSync(filePath);
+    reply.header('Content-Type', contentType).send(content);
+  } else {
+    reply.code(404).send({ error: 'Not found' });
+  }
+});
+
+fastify.get('/favicon.svg', async (request, reply) => {
+  const filePath = join(webPath, 'favicon.svg');
+  if (existsSync(filePath)) {
+    reply.header('Content-Type', 'image/svg+xml').send(readFileSync(filePath));
+  } else {
+    reply.code(404).send({ error: 'Not found' });
+  }
+});
+
+fastify.get('/manifest.webmanifest', async (request, reply) => {
+  const filePath = join(webPath, 'manifest.webmanifest');
+  if (existsSync(filePath)) {
+    reply.header('Content-Type', 'application/manifest+json').send(readFileSync(filePath));
+  } else {
+    reply.code(404).send({ error: 'Not found' });
+  }
+});
+
+fastify.get('/sw.js', async (request, reply) => {
+  const filePath = join(webPath, 'sw.js');
+  if (existsSync(filePath)) {
+    reply.header('Content-Type', 'application/javascript').send(readFileSync(filePath));
+  } else {
+    reply.code(404).send({ error: 'Not found' });
+  }
+});
+
+fastify.get('/registerSW.js', async (request, reply) => {
+  const filePath = join(webPath, 'registerSW.js');
+  if (existsSync(filePath)) {
+    reply.header('Content-Type', 'application/javascript').send(readFileSync(filePath));
+  } else {
+    reply.code(404).send({ error: 'Not found' });
+  }
+});
 
 // Start server
 const start = async () => {

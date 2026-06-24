@@ -257,6 +257,9 @@ function handleHtmlPathClick(matchedPath: string) {
   webViewerStore.setVisible(true);
 }
 
+// Browser visibility change handler (minimize, tab switch, mobile app switch)
+let visibilityHandler: (() => void) | null = null;
+
 onMounted(() => {
   // Register CWD buffer parser so FileView can parse CWD from terminal buffer directly
   terminalStore.registerBufferParser(props.tab.id, parseCwdFromBuffer);
@@ -265,6 +268,15 @@ onMounted(() => {
   if (props.visible) {
     initTerminal();
   }
+
+  // Recover Claude Code TUI when browser becomes visible again
+  // Covers: browser minimize/restore, mobile app switch away/back, browser tab switch
+  visibilityHandler = () => {
+    if (!document.hidden && props.visible && terminal && sessionId) {
+      sendWideCharRecovery(200);
+    }
+  };
+  document.addEventListener('visibilitychange', visibilityHandler);
 });
 
 onUnmounted(() => {
@@ -273,6 +285,10 @@ onUnmounted(() => {
   terminalStore.unregisterTabFocuser(props.tab.id);
   terminalStore.unregisterTabScroller(props.tab.id);
   terminalStore.unregisterTabFitter(props.tab.id);
+  if (visibilityHandler) {
+    document.removeEventListener('visibilitychange', visibilityHandler);
+    visibilityHandler = null;
+  }
   cleanup();
 });
 
@@ -285,7 +301,7 @@ function sendWideCharRecovery(delayMs: number = 600) {
       // Send wide character to trigger layout recalculation
       ws.send(JSON.stringify({
         type: 'session:input', sessionId: currentSessionId,
-        payload: { data: '中' },
+        payload: { data: '口' },
         timestamp: Date.now(),
       }));
       // Delete immediately — 100ms is enough for Claude Code to process
@@ -344,6 +360,8 @@ watch(() => props.visible, (visible, wasVisible) => {
 // Focus terminal when MarkdownViewer closes
 watch(() => fileStore.viewerVisible, (visible) => {
   if (!visible && terminal) {
+    // Recover Claude Code TUI after file viewer overlay closes
+    sendWideCharRecovery(200);
     setTimeout(() => tryFocus(), 100);
   }
 });

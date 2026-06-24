@@ -61,6 +61,26 @@
   --transition-fast: 150ms ease;
   --transition-base: 200ms ease;
   --transition-slow: 300ms ease;
+  --transition-snappy: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* === Button gradients (for depth) === */
+  --gradient-btn-danger: linear-gradient(180deg, #f44336 0%, #d32f2f 100%);
+  --gradient-btn-info: linear-gradient(180deg, #4fc3f7 0%, #0288d1 100%);
+  --gradient-btn-purple: linear-gradient(180deg, #9c27b0 0%, #7b1fa2 100%);
+  --gradient-btn-success: linear-gradient(180deg, #66bb6a 0%, #4caf50 100%);
+  --gradient-btn-accent: linear-gradient(180deg, #ff6b8a 0%, #e94560 100%);
+
+  /* === Inner shadows (for depth) === */
+  --shadow-inset-sm: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-inset-md: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+
+  /* === Text shadow (for glow effects) === */
+  --text-shadow-glow: 0 0 20px rgba(233, 69, 96, 0.3);
+
+  /* === Animation durations === */
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -79,6 +99,13 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Distinctive font for headings and brand elements */
+h1, h2, h3, .login-card h1, .voice-bar-title, .settings-card h1 {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
 ::selection {
   background: var(--accent-subtle-strong);
   color: var(--accent-hover);
@@ -90,6 +117,18 @@ body {
   border-radius: var(--radius-sm);
 }
 
+/* Ensure focus indicators on all interactive elements */
+button:focus-visible,
+.dropdown-btn:focus-visible,
+.action-btn:focus-visible,
+.key-btn:focus-visible,
+.icon-btn:focus-visible,
+.tab:focus-visible,
+.path-segment:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
 a {
   color: var(--accent);
   text-decoration: none;
@@ -99,6 +138,17 @@ a {
 a:hover {
   color: var(--accent-hover);
   text-decoration: none;
+}
+
+/* Button enable animation */
+@keyframes enable-pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+  100% { transform: scale(1); }
+}
+
+button:enabled:not(:disabled) {
+  transition: opacity var(--transition-base), transform var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 /* Scrollbar styling */

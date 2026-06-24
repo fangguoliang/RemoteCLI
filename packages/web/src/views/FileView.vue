@@ -88,14 +88,14 @@
         placeholder="D: or path..."
         @keyup.enter="goToPath"
       />
-      <button class="action-btn" @click="goToPath">Go</button>
-      <button class="icon-btn" @click="triggerUpload" title="上传">
+      <button class="action-btn" @click="goToPath" aria-label="跳转到路径">Go</button>
+      <button class="icon-btn" @click="triggerUpload" title="上传" aria-label="上传文件">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
       </button>
-      <button class="icon-btn" @click="refresh" title="刷新">
+      <button class="icon-btn" @click="refresh" title="刷新" aria-label="刷新目录">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
       </button>
-      <button class="icon-btn save-icon-btn" @click="openSaveModal" :disabled="!currentPath" title="保存快捷方式">
+      <button class="icon-btn save-icon-btn" @click="openSaveModal" :disabled="!currentPath" title="保存快捷方式" aria-label="保存为快捷方式">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
       </button>
     </div>
@@ -450,8 +450,11 @@ onMounted(async () => {
   // Auto-select first online agent if available
   console.log('[FileView][DEBUG] selectedAgentId (before auto-select):', selectedAgentId.value);
   if (onlineAgents.value.length > 0 && !selectedAgentId.value) {
-    const activeTab = terminalStore.tabs.find(t => t.id === terminalStore.activeTabId);
-    const activeTabAgent = activeTab ? agents.value.find(a => a.agentId === activeTab.agentId) : null;
+    // [debug-loop] fix: use getActiveTabAgentId() which falls back to sessionStorage
+    // when Pinia tabs array appears empty (e.g. full page load before TerminalView restores)
+    const activeTabAgentId = terminalStore.getActiveTabAgentId();
+    const activeTab = activeTabAgentId ? { agentId: activeTabAgentId } : null;
+    const activeTabAgent = activeTabAgentId ? agents.value.find(a => a.agentId === activeTabAgentId) : null;
     const activeTabCwdBefore = terminalStore.getActiveTabCwd();
 
     if (activeTab && activeTabAgent?.online) {
@@ -519,8 +522,10 @@ watch(onlineAgents, (newOnlineAgents) => {
 
   // If no agent selected and there are online agents, try active tab CWD
   if (newOnlineAgents.length > 0) {
-    const activeTab = terminalStore.tabs.find(t => t.id === terminalStore.activeTabId);
-    const activeTabAgent = activeTab ? agents.value.find(a => a.agentId === activeTab.agentId) : null;
+    // [debug-loop] fix: use getActiveTabAgentId() for sessionStorage fallback
+    const activeTabAgentId = terminalStore.getActiveTabAgentId();
+    const activeTab = activeTabAgentId ? { agentId: activeTabAgentId } : null;
+    const activeTabAgent = activeTabAgentId ? agents.value.find(a => a.agentId === activeTabAgentId) : null;
     const activeTabCwd = terminalStore.getActiveTabCwd();
 
     if (activeTabCwd && activeTab && activeTabAgent?.online) {
@@ -534,11 +539,9 @@ watch(onlineAgents, (newOnlineAgents) => {
 });
 
 // Watch for active tab CWD changes and auto-navigate (handles delayed session:output)
+// [debug-loop] fix: use getActiveTabCwd() which includes sessionStorage fallback
 watch(
-  () => {
-    const activeTab = terminalStore.tabs.find(t => t.id === terminalStore.activeTabId);
-    return activeTab ? terminalStore.getTabCwd(activeTab.id) : undefined;
-  },
+  () => terminalStore.getActiveTabCwd(),
   (cwd) => {
     if (!cwd || !selectedAgentId.value) return;
     console.log('[FileView][DEBUG] tabCwd watch triggered, browsing to:', cwd);
@@ -720,19 +723,22 @@ watch(
 .path-segment {
   color: var(--info);
   cursor: pointer;
-  padding: var(--space-1) var(--space-1);
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
-  transition: background var(--transition-fast);
+  font-weight: 500;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .path-segment:hover {
-  text-decoration: underline;
+  text-decoration: none;
   background: var(--accent-subtle);
+  color: var(--accent-hover);
 }
 
 .path-segment::after {
   content: ' > ';
   color: var(--text-muted);
+  margin-left: var(--space-1);
 }
 
 .path-segment:last-child::after {

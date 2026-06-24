@@ -1,7 +1,10 @@
 <template>
   <div class="terminal-wrapper" v-show="visible">
     <div ref="terminalRef" class="terminal"></div>
-    <div v-if="status === 'connecting'" class="status-overlay">连接中...</div>
+    <div v-if="status === 'connecting'" class="status-overlay">
+      <div class="spinner"></div>
+      <span>连接中...</span>
+    </div>
     <div v-if="status === 'disconnected'" class="status-overlay error">已断开</div>
     <MarkdownViewer />
     <WebViewer />
@@ -1939,6 +1942,20 @@ defineExpose({
   font-weight: 500;
 }
 .status-overlay.error { color: var(--error); }
+
+.status-overlay .spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--accent-subtle);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: var(--space-2);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 
 /* Prevent pull-to-refresh on all xterm elements */
 .terminal-wrapper :deep(.xterm),

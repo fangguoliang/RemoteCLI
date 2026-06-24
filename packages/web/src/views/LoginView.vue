@@ -138,7 +138,8 @@ async function handleChangePassword() {
   margin-bottom: var(--space-1);
   font-size: 1.75rem;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
+  text-shadow: var(--text-shadow-glow);
 }
 
 .login-card p {

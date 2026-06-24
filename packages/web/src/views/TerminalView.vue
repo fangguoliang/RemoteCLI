@@ -9,7 +9,10 @@
           <span class="arrow" :class="{ open: showAgents }">▼</span>
         </button>
         <div class="dropdown-menu" v-show="showAgents">
-          <div v-if="loading" class="menu-item loading">Loading...</div>
+          <div v-if="loading" class="menu-item loading">
+            <span class="spinner-sm"></span>
+            Loading...
+          </div>
           <div v-else-if="error" class="menu-item error">{{ error }}</div>
           <div v-else-if="agents.length === 0" class="menu-item no-agents">
             No agents available
@@ -29,8 +32,9 @@
           <span class="arrow" :class="{ open: showShortcuts }">▼</span>
         </button>
         <div class="dropdown-menu" v-show="showShortcuts">
-          <div v-if="shortcuts.length === 0" class="menu-item no-shortcuts">
-            暂无快捷方式
+          <div v-if="shortcuts.length === 0" class="menu-item no-shortcuts empty-state-mini">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <span>暂无快捷方式</span>
           </div>
           <div v-else>
             <div v-for="shortcut in shortcuts" :key="shortcut.id" class="menu-item shortcut-item" @click="executeShortcut(shortcut)">
@@ -44,11 +48,11 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <router-link to="/files" class="action-btn" title="文件">
+        <router-link to="/files" class="action-btn" title="文件" aria-label="文件管理">
           <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
         </router-link>
         <div class="history-dropdown" v-if="historyTabs.length > 0">
-          <button class="history-btn" @click="showHistory = !showHistory" title="历史记录">
+          <button class="history-btn" @click="showHistory = !showHistory" title="历史记录" aria-label="历史记录">
             <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 12h6"/><path d="M9 16h6"/></svg>
           </button>
           <div class="dropdown-menu history-menu" v-show="showHistory">
@@ -62,10 +66,10 @@
             </div>
           </div>
         </div>
-        <router-link to="/settings" class="action-btn" title="设置">
+        <router-link to="/settings" class="action-btn" title="设置" aria-label="设置">
           <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
         </router-link>
-        <button @click="logout" class="action-btn power-btn" title="登出">
+        <button @click="logout" class="action-btn power-btn" title="登出" aria-label="登出">
           <span class="power-icon"></span>
         </button>
       </div>
@@ -85,6 +89,7 @@
     <!-- 终端区域 -->
     <div class="terminal-container">
       <div v-if="tabs.length === 0" class="empty-state">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
         <p>选择一个 Agent 开始终端会话</p>
         <p class="hint">点击上方 "Agents" 选择在线的 Agent</p>
       </div>
@@ -655,6 +660,20 @@ onUnmounted(() => {
   cursor: default;
 }
 
+.menu-item.loading .spinner-sm {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent-subtle);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: var(--space-2);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .menu-item.error {
   color: var(--error);
   cursor: default;
@@ -841,6 +860,18 @@ onUnmounted(() => {
   white-space: nowrap;
   flex-shrink: 0;
   transition: background var(--transition-fast), color var(--transition-fast);
+  animation: tab-in var(--duration-base) ease;
+}
+
+@keyframes tab-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
 }
 
 .tab.active {
@@ -899,12 +930,18 @@ onUnmounted(() => {
   color: var(--text-secondary);
   text-align: center;
   padding: var(--space-6);
+  gap: var(--space-3);
+}
+
+.empty-state .empty-icon {
+  color: var(--text-muted);
+  opacity: 0.3;
 }
 
 .empty-state .hint {
   color: var(--text-muted);
   font-size: 0.85rem;
-  margin-top: var(--space-2);
+  margin-top: 0;
 }
 
 /* 底部快捷键按钮 */
@@ -949,52 +986,63 @@ onUnmounted(() => {
 }
 
 .tab-btn {
-  background: #7b1fa2;
+  background: var(--gradient-btn-purple);
+  box-shadow: var(--shadow-inset-sm), var(--shadow-sm);
   font-weight: 700;
   font-size: 0.8rem;
 }
 
 .tab-btn:active {
-  background: #6a1b9a;
+  background: var(--gradient-btn-purple);
+  box-shadow: var(--shadow-inset-md);
   transform: scale(0.95);
 }
 
 .ctrl-c-btn {
-  background: var(--error);
+  background: var(--gradient-btn-danger);
+  box-shadow: var(--shadow-inset-sm), var(--shadow-sm);
   font-weight: 700;
 }
 
 .ctrl-c-btn:active {
-  background: #b71c1c;
+  background: var(--gradient-btn-danger);
+  box-shadow: var(--shadow-inset-md);
   transform: scale(0.95);
 }
 
 .ctrl-d-btn {
-  background: var(--info);
+  background: var(--gradient-btn-info);
+  box-shadow: var(--shadow-inset-sm), var(--shadow-sm);
   font-weight: 700;
 }
 
 .ctrl-d-btn:active {
-  background: #0d47a1;
+  background: var(--gradient-btn-info);
+  box-shadow: var(--shadow-inset-md);
   transform: scale(0.95);
 }
 
 .arrow-btn {
   font-size: 1rem;
+  background: linear-gradient(180deg, var(--bg-surface-elevated) 0%, rgba(30, 42, 74, 0.8) 100%);
+  box-shadow: var(--shadow-inset-sm);
 }
 
 .bottom-btn {
-  background: var(--success);
+  background: var(--gradient-btn-success);
+  box-shadow: var(--shadow-inset-sm), var(--shadow-sm);
 }
 
 .bottom-btn:active {
-  background: #388e3c;
+  background: var(--gradient-btn-success);
+  box-shadow: var(--shadow-inset-md);
   transform: scale(0.95);
 }
 
 /* 记录按钮 */
 .capture-btn {
-  background: var(--accent);
+  background: var(--gradient-btn-accent);
+  box-shadow: var(--shadow-inset-sm), var(--shadow-sm);
 }
 
 .capture-btn svg {
@@ -1005,10 +1053,12 @@ onUnmounted(() => {
 .capture-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .capture-btn:not(:disabled):active {
-  background: var(--accent-hover);
+  background: var(--gradient-btn-accent);
+  box-shadow: var(--shadow-inset-md);
   transform: scale(0.95);
 }
 
@@ -1273,5 +1323,12 @@ onUnmounted(() => {
 .btn-save:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.menu-item.no-shortcuts.empty-state-mini {
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  opacity: 0.6;
 }
 </style>

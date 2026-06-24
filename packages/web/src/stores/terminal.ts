@@ -28,6 +28,7 @@ export interface Shortcut {
 interface StoredSession {
   tabs: Tab[];
   activeTabId: string | null;
+  tabCwd?: Record<string, string>;
 }
 
 const SESSION_KEY = 'remotecli-terminal-session';
@@ -178,7 +179,14 @@ export const useTerminalStore = defineStore('terminal', () => {
   const shortcuts = ref<Shortcut[]>([]);
 
   // Track current working directory per tab (tabId -> cwd)
-  const tabCwd = reactive<Record<string, string>>({});
+  // [debug-loop] fix: persist tabCwd in sessionStorage to survive mobile browser page freezes/reloads
+  const tabCwd = reactive<Record<string, string>>(loadSessionData()?.tabCwd || {});
+
+  // Track which tabs have CWD locked by cd detection handler
+  // When user types cd/Set-Location, the CWD is known authoritatively.
+  // Lock prevents stale PS prompts from session:resume buffered output
+  // from overwriting the correct CWD.
+  const tabCwdLocked = new Set<string>();
 
   // Current username for user-specific storage
   let currentUsername = '';
@@ -202,6 +210,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   const historyTabs = ref<Tab[]>([]);
 
   // Watch for changes and auto-save session
+  // [debug-loop] fix: include tabCwd in persisted session data
   watch(
     [tabs, activeTabId],
     () => {
@@ -209,6 +218,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         saveSessionData({
           tabs: tabs.value,
           activeTabId: activeTabId.value,
+          tabCwd: { ...tabCwd },
         });
       }
     },
@@ -435,6 +445,23 @@ export const useTerminalStore = defineStore('terminal', () => {
     return null;
   }
 
+  // Get the active tab's agentId from either Pinia store or sessionStorage fallback
+  // [debug-loop] fix: handles case where Pinia tabs array appears empty
+  function getActiveTabAgentId(): string | null {
+    // Try Pinia store first
+    const activeTab = tabs.value.find(t => t.id === activeTabId.value);
+    if (activeTab) return activeTab.agentId;
+    // Fallback to sessionStorage
+    try {
+      const session = loadSessionData();
+      if (session?.activeTabId && session.tabs) {
+        const storedTab = session.tabs.find(t => t.id === session.activeTabId);
+        if (storedTab) return storedTab.agentId;
+      }
+    } catch {}
+    return null;
+  }
+
   // Get the most recent history tab (for login restore)
   function getLastHistoryTab(): Tab | null {
     return historyTabs.value[0] || null;
@@ -458,8 +485,31 @@ export const useTerminalStore = defineStore('terminal', () => {
   }
 
   // Set the CWD for a specific tab
+  // [debug-loop] fix: persist tabCwd change to sessionStorage immediately
   function setTabCwd(tabId: string, cwd: string) {
     tabCwd[tabId] = cwd;
+    // Persist immediately since the watch only watches tabs/activeTabId
+    saveSessionData({
+      tabs: tabs.value,
+      activeTabId: activeTabId.value,
+      tabCwd: { ...tabCwd },
+    });
+  }
+
+  // Lock CWD for a tab (called after cd detection handler sets CWD)
+  // Prevents stale PS prompts from session:resume from overwriting correct CWD
+  function lockTabCwd(tabId: string) {
+    tabCwdLocked.add(tabId);
+  }
+
+  // Check if CWD is locked for a tab
+  function isTabCwdLocked(tabId: string): boolean {
+    return tabCwdLocked.has(tabId);
+  }
+
+  // Unlock CWD for a tab (called when new session is created)
+  function unlockTabCwd(tabId: string) {
+    tabCwdLocked.delete(tabId);
   }
 
   // Get the CWD for a specific tab
@@ -481,6 +531,8 @@ export const useTerminalStore = defineStore('terminal', () => {
   }
 
   // Get the CWD of the active tab (store first, then buffer fallback)
+  // [debug-loop] fix: fallback to sessionStorage when Pinia state appears empty
+  // (can happen when FileView mounts via full page load before TerminalView restores session)
   function getActiveTabCwd(): string | undefined {
     if (activeTabId.value) {
       const stored = tabCwd[activeTabId.value];
@@ -496,12 +548,37 @@ export const useTerminalStore = defineStore('terminal', () => {
         }
       }
     }
+    // Pinia state fallback: read tabCwd directly from sessionStorage
+    // This handles the case where Pinia store appears empty (e.g. full page load)
+    try {
+      const sessionData = loadSessionData();
+      if (sessionData?.tabCwd) {
+        const entries = Object.entries(sessionData.tabCwd);
+        if (entries.length > 0) {
+          // Return the most recently set CWD
+          const [_tabId, cwd] = entries[entries.length - 1];
+          // Also restore to Pinia state for future calls
+          if (sessionData.activeTabId && sessionData.tabCwd[sessionData.activeTabId]) {
+            tabCwd[sessionData.activeTabId] = sessionData.tabCwd[sessionData.activeTabId];
+            return sessionData.tabCwd[sessionData.activeTabId];
+          }
+          return cwd;
+        }
+      }
+    } catch {}
     return undefined;
   }
 
   // Remove CWD for a tab (called when tab is closed)
+  // [debug-loop] fix: persist removal to sessionStorage
   function removeTabCwd(tabId: string) {
     delete tabCwd[tabId];
+    tabCwdLocked.delete(tabId);
+    saveSessionData({
+      tabs: tabs.value,
+      activeTabId: activeTabId.value,
+      tabCwd: { ...tabCwd },
+    });
   }
 
   // Clear current session only (used on logout, but keep history)
@@ -606,6 +683,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     unregisterTabFitter,
     fitActiveTab,
     getLastActiveTab,
+    getActiveTabAgentId,
     getLastHistoryTab,
     getAllSessionTabs,
     getAllHistoryTabsForRestore,
@@ -622,5 +700,8 @@ export const useTerminalStore = defineStore('terminal', () => {
     removeTabCwd,
     registerBufferParser,
     unregisterBufferParser,
+    lockTabCwd,
+    isTabCwdLocked,
+    unlockTabCwd,
   };
 });

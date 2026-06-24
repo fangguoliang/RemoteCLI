@@ -2,7 +2,10 @@
   <div class="file-list">
     <div v-if="loading" class="loading">加载中...</div>
     <div v-else-if="error" class="error">{{ error }}</div>
-    <div v-else-if="entries.length === 0" class="empty">目录为空</div>
+    <div v-else-if="entries.length === 0" class="empty">
+      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+      <span>此目录为空</span>
+    </div>
     <div v-else class="entries">
       <div
         v-for="entry in entries"
@@ -19,8 +22,7 @@
         <span v-if="!entry.isDirectory && entry.size" class="size">{{ formatSize(entry.size) }}</span>
         <span v-if="entry.modifiedAt" class="time">{{ formatTime(entry.modifiedAt) }}</span>
       </div>
-    </div>
-  </div>
+    </div>  </div>
 </template>
 
 <script setup lang="ts">
@@ -73,10 +75,45 @@ function formatTime(ts: number): string {
   padding: var(--space-5);
   text-align: center;
   color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.empty-icon {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.loading::before {
+  content: '';
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--accent-subtle);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: var(--space-2);
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .error {
   color: var(--error);
+}
+
+.entries {
+  animation: fade-in var(--duration-base) ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .entry {

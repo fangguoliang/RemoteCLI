@@ -81,7 +81,7 @@ defineProps<{
 .progress-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--info), var(--info-light));
-  transition: width 0.3s ease;
+  transition: width var(--transition-slow);
 }
 
 .error {

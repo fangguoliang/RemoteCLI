@@ -252,9 +252,9 @@ function handleConfirmExecute() {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
   border: 2px solid var(--border-default, rgba(255, 255, 255, 0.1));
-  transition: all 0.2s ease;
+  transition: all var(--transition-base);
   position: relative;
 }
 
@@ -280,10 +280,10 @@ function handleConfirmExecute() {
 
 @keyframes pulse-recording {
   0%, 100% {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 0 rgba(233, 69, 96, 0.4);
+    box-shadow: var(--shadow-md), 0 0 0 0 rgba(233, 69, 96, 0.4);
   }
   50% {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 12px rgba(233, 69, 96, 0);
+    box-shadow: var(--shadow-md), 0 0 0 12px rgba(233, 69, 96, 0);
   }
 }
 
@@ -318,7 +318,7 @@ function handleConfirmExecute() {
   backdrop-filter: blur(16px);
   border-radius: 16px;
   border: 1px solid var(--border-default, rgba(255, 255, 255, 0.1));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
@@ -364,7 +364,7 @@ function handleConfirmExecute() {
   color: rgba(255, 255, 255, 0.4);
   font-size: 0.7rem;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--transition-fast);
   white-space: nowrap;
   line-height: 1.2;
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
@@ -390,7 +390,7 @@ function handleConfirmExecute() {
 /* 按下效果 */
 .mode-toggle-btn:active:not(.active) {
   transform: translateY(0.5px);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-inset-sm);
 }
 
 .close-btn {
@@ -404,7 +404,7 @@ function handleConfirmExecute() {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: all var(--transition-base);
 }
 
 .close-btn:hover {
@@ -500,7 +500,7 @@ function handleConfirmExecute() {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  transition: all 0.2s ease;
+  transition: all var(--transition-base);
 }
 
 .error-close-btn:hover {
@@ -529,7 +529,7 @@ function handleConfirmExecute() {
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--transition-base);
 }
 
 .voice-btn:hover {
@@ -569,7 +569,7 @@ function handleConfirmExecute() {
   border-radius: 16px;
   padding: 24px;
   max-width: 400px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 
 .confirm-title {
@@ -599,7 +599,7 @@ function handleConfirmExecute() {
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--transition-base);
 }
 
 .confirm-btn.cancel {
@@ -624,7 +624,7 @@ function handleConfirmExecute() {
 /* 面板展开/收起动画 */
 .panel-enter-active,
 .panel-leave-active {
-  transition: all 0.2s ease;
+  transition: all var(--transition-base);
 }
 
 .panel-enter-from,

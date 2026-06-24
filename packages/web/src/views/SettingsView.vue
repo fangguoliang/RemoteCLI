@@ -537,29 +537,37 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.settings-container { display: flex; justify-content: center; padding: 2rem; background: #1a1a2e; min-height: 100vh; }
-.settings-card { background: #16213e; padding: 2rem; border-radius: 8px; width: 100%; max-width: 500px; }
-.settings-card h1 { color: #e94560; margin-bottom: 1.5rem; }
-.form-group { margin-bottom: 1rem; }
-.form-group label { display: block; color: #e0e0e0; margin-bottom: 0.5rem; }
-.form-group input, .form-group select { width: 100%; padding: 0.75rem; border: 1px solid #333; border-radius: 4px; background: #1a1a2e; color: #fff; }
-button { padding: 0.75rem 1.5rem; background: #e94560; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-button:disabled { opacity: 0.6; }
-.back-link { display: block; text-align: center; margin-top: 1rem; color: #a0a0a0; }
-.admin-section { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid #333; }
-.admin-section h2 { color: #e94560; margin-bottom: 1rem; font-size: 1.2rem; }
-.admin-section h3 { color: #e0e0e0; margin-bottom: 0.5rem; font-size: 1rem; }
-.button-group { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+.settings-container { display: flex; justify-content: center; padding: var(--space-6); background: var(--bg-page); min-height: 100vh; }
+.settings-card { background: var(--bg-surface); padding: var(--space-6); border-radius: var(--radius-lg); width: 100%; max-width: 500px; border: 1px solid var(--border-subtle); box-shadow: var(--shadow-lg); }
+.settings-card h1 { color: var(--accent); margin-bottom: 1.5rem; }
+.form-group { margin-bottom: var(--space-4); }
+.form-group label { display: block; color: var(--text-secondary); margin-bottom: var(--space-2); font-weight: 500; font-size: 0.875rem; }
+.form-group input, .form-group select { width: 100%; padding: 0.75rem; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-root); color: var(--text-primary); font-size: 1rem; transition: border-color var(--transition-fast), box-shadow var(--transition-fast); }
+.form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+button { padding: 0.75rem 1.5rem; background: var(--accent); color: var(--text-on-accent); border: none; border-radius: var(--radius-md); cursor: pointer; font-size: 1rem; font-weight: 600; transition: background var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast); }
+button:hover:not(:disabled) { background: var(--accent-hover); box-shadow: var(--shadow-glow); }
+button:active:not(:disabled) { transform: scale(0.98); }
+button:disabled { opacity: 0.6; cursor: not-allowed; }
+.back-link { display: block; text-align: center; margin-top: var(--space-6); color: var(--text-secondary); transition: color var(--transition-fast); }
+.back-link:hover { color: var(--accent); }
+.admin-section { margin-top: var(--space-8); padding-top: var(--space-6); border-top: 1px solid var(--border-subtle); }
+.admin-section h2 { color: var(--accent); margin-bottom: var(--space-4); font-size: 1.2rem; }
+.admin-section h3 { color: var(--text-primary); margin-bottom: var(--space-2); font-size: 1rem; }
+.button-group { display: flex; gap: var(--space-2); margin-bottom: var(--space-2); }
 .button-group button { flex: 1; }
-.btn-sm { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
-.btn-warning { background: #ff9800; }
-.btn-danger { background: #f44336; }
-.btn-info { background: #2196f3; }
-.btn-success { background: #4caf50; }
-.error { color: #e94560; margin-top: 0.5rem; font-size: 0.9rem; white-space: pre-line; }
-.success { color: #4caf50; margin-top: 0.5rem; font-size: 0.9rem; white-space: pre-line; }
-.permission-detail { width: 100%; padding: 0.75rem; border: 1px solid #333; border-radius: 4px; background: #1a1a2e; color: #fff; font-family: monospace; resize: vertical; }
-.checkbox-group { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.checkbox-label { display: flex; align-items: center; gap: 0.25rem; color: #e0e0e0; font-size: 0.9rem; cursor: pointer; }
-.checkbox-label input { width: auto; }
+.btn-sm { padding: var(--space-2) var(--space-3); font-size: 0.85rem; }
+.btn-warning { background: var(--warning); }
+.btn-warning:hover:not(:disabled) { background: #ffb74d; }
+.btn-danger { background: var(--error); }
+.btn-danger:hover:not(:disabled) { background: #ef5350; }
+.btn-info { background: var(--info); color: var(--bg-root); }
+.btn-info:hover:not(:disabled) { background: var(--info-light); }
+.btn-success { background: var(--success); }
+.btn-success:hover:not(:disabled) { background: var(--success-hover); }
+.error { color: var(--error); margin-top: var(--space-2); font-size: 0.9rem; white-space: pre-line; }
+.success { color: var(--success); margin-top: var(--space-2); font-size: 0.9rem; white-space: pre-line; }
+.permission-detail { width: 100%; padding: 0.75rem; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-root); color: var(--text-primary); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9rem; resize: vertical; }
+.checkbox-group { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.checkbox-label { display: flex; align-items: center; gap: var(--space-1); color: var(--text-primary); font-size: 0.9rem; cursor: pointer; }
+.checkbox-label input { width: auto; accent-color: var(--accent); }
 </style>

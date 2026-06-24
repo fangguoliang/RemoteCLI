@@ -38,6 +38,11 @@ let saveScrollbackTimer: number | null = null;
 let terminalInitialized = false; // Track if terminal has been initialized
 let shouldSendResize = true; // Control whether to send resize to server
 let userScrolledUp = false; // Track if user manually scrolled up from bottom
+// [debug-loop] fix: Track last sent dimensions to prevent duplicate session:resize
+// when fit() is called multiple times with same dimensions (e.g., from
+// TerminalView + TerminalTab both having viewport handlers).
+let lastSentCols = 0;
+let lastSentRows = 0;
 
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
@@ -54,6 +59,14 @@ const TERMINAL_INIT_DELAY = 400; // ms - wait for terminal to initialize and rec
 
 // Execution state for cancellation
 let shouldAbortExecution = false;
+
+// [debug-loop] fix: typed input buffer for cd detection
+// PTY echo has latency — when user presses Enter, the typed chars may not
+// yet be in the terminal buffer. Track typed chars separately so we can
+// detect cd commands at Enter time without waiting for echo.
+// [debug-loop] fix: when true, the next PS prompt in session:output is from user's command
+// (not stale session:resume output), so it's safe to extract CWD from it
+let waitingForFreshPrompt = false;
 
 // Parse current working directory from terminal buffer
 // Handles standard PowerShell prompt "PS D:\path>" and Starship prompt "D:\path ❯"
@@ -262,6 +275,32 @@ onUnmounted(() => {
   cleanup();
 });
 
+// [debug-loop] fix: Extract wide-char recovery as reusable function
+// Simulates "Chinese first input" to trigger Claude Code's full layout recalculation
+function sendWideCharRecovery(delayMs: number = 600) {
+  setTimeout(() => {
+    const currentSessionId = props.tab.sessionId;
+    if (ws && currentSessionId && ws.readyState === WebSocket.OPEN) {
+      // Send wide character to trigger layout recalculation
+      ws.send(JSON.stringify({
+        type: 'session:input', sessionId: currentSessionId,
+        payload: { data: '中' },
+        timestamp: Date.now(),
+      }));
+      // Delete immediately — 100ms is enough for Claude Code to process
+      setTimeout(() => {
+        if (ws && currentSessionId && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'session:input', sessionId: currentSessionId,
+            payload: { data: '\x7f' },
+            timestamp: Date.now(),
+          }));
+        }
+      }, 100);
+    }
+  }, delayMs);
+}
+
 watch(() => props.visible, (visible, wasVisible) => {
   // Initialize terminal when becoming visible for the first time
   if (visible && !terminalInitialized) {
@@ -277,27 +316,25 @@ watch(() => props.visible, (visible, wasVisible) => {
   if (visible && terminal) {
     // Update CWD when switching to this tab
     const cwd = parseCwdFromBuffer();
-    if (cwd) {
+    if (cwd && !terminalStore.isTabCwdLocked(props.tab.id)) {
       terminalStore.setTabCwd(props.tab.id, cwd);
     }
 
-    const buffer = terminal.buffer.active;
-    console.log(`[TerminalTab] Before fit - ${props.tab.id}: cols=${terminal.cols}, rows=${terminal.rows}, buffer length=${buffer.length}`);
+    // [debug-loop] fix: Send wide-char recovery when switching back to this tab
+    // Multi-tab switching doesn't trigger session:resume, but still needs recovery
+    // Use shorter delay (200ms) since no bump resize is happening
+    sendWideCharRecovery(200);
 
+    // Only ONE safeFit call to prevent multiple rapid resize events
+    // that corrupt Claude Code TUI state.
     requestAnimationFrame(() => {
       if (!terminal) return;
       safeFit();
-      console.log(`[TerminalTab] After fit - ${props.tab.id}: cols=${terminal.cols}, rows=${terminal.rows}`);
 
       requestAnimationFrame(() => {
         if (!terminal) return;
         forceScrollToBottom();
-        setTimeout(() => {
-          if (!terminal) return;
-          safeFit();
-          forceScrollToBottom();
-          tryFocus();
-        }, 100);
+        tryFocus();
       });
     });
   }
@@ -397,13 +434,8 @@ function safeFit() {
   if (!props.visible || !terminal || !fitAddon || !terminalRef.value) return;
 
   const rect = terminalRef.value.getBoundingClientRect();
-  // Skip fit if container has no valid dimensions (hidden or not rendered)
-  if (rect.width <= 0 || rect.height <= 0) {
-    console.log(`[TerminalTab] Skipping fit - container has no dimensions: ${rect.width}x${rect.height}`);
-    return;
-  }
+  if (rect.width <= 0 || rect.height <= 0) return;
 
-  console.log(`[TerminalTab] Fitting terminal ${props.tab.id}, container: ${rect.width}x${rect.height}`);
   shouldSendResize = true;
   fitAddon.fit();
 }
@@ -414,7 +446,12 @@ function initTerminal() {
   terminalInitialized = true;
   console.log(`[TerminalTab] Initializing terminal for ${props.tab.id}`);
 
+  // [debug-loop] fix: convertEol=true converts bare \n to \r\n.
+  // Claude Code CLI uses ANSI escape sequences with bare \n (no \r),
+  // causing stairstep rendering corruption in xterm.js (which defaults to convertEol=false).
+  // PowerShell uses Windows console APIs → ConPTY converts \n to \r\n → not affected.
   terminal = new Terminal({
+    convertEol: true,
     fontFamily: settingsStore.settings.fontFamily,
     fontSize: settingsStore.settings.fontSize,
     theme: {
@@ -1383,64 +1420,50 @@ function initTerminal() {
   // Setup touch event handling for pull-to-refresh prevention
   setupTouchHandling();
 
-  // Setup visual viewport handling for mobile keyboard
-  setupVisualViewportHandling();
+  // [debug-loop] fix: Removed TerminalTab's own setupVisualViewportHandling().
+  // TerminalView.vue already has a viewport handler that:
+  // 1. Adjusts terminal-page.style.bottom for keyboard height
+  // 2. Calls fitActiveTab() via store → safeFit() → fitAddon.fit()
+  // Having BOTH TerminalView and TerminalTab listen to visualViewport events
+  // caused fit() to be called twice within 20ms (TerminalView at ~120ms, TerminalTab at ~100ms),
+  // each triggering session:resize and PTY resize on the agent — causing screen width oscillation.
+  // TerminalView's handler is the single source of truth for viewport-driven fit.
 
   terminal.onData((data) => {
-    // Capture command when user presses Enter
-    if ((data === '\r' || data === '\n') && terminal) {
-      // Get current line content from terminal buffer
-      const buffer = terminal.buffer.active;
-      const currentLine = buffer.getLine(buffer.cursorY + buffer.baseY);
-      if (currentLine) {
-        const lineText = currentLine.translateToString(true);
-        // Remove prompt prefix (PS C:\path> format)
-        const commandMatch = lineText.match(/^PS\s+[^>]*>\s*(.*)$/);
-        const commandText = commandMatch ? commandMatch[1] : lineText;
-        if (commandText.trim()) {
-          terminalStore.captureCommand(commandText);
+    if (data === '\r' || data === '\n') {
+      // Enter pressed — user is about to execute a command.
+      // The next PS prompt we see in session:output will be the FRESH prompt
+      // (reflecting the new CWD after the command runs).
+      // Set flag so session:output handler knows to extract CWD from it.
+      waitingForFreshPrompt = true;
+      // Also unlock CWD so the fresh prompt can update it
+      terminalStore.unlockTabCwd(props.tab.id);
 
-          // Detect cd/Set-Location commands and update CWD immediately
-          // so file browser has the latest path even before server output arrives
-          const cdMatch = commandText.trim().match(/^(?:cd|Set-Location|chdir|sl)\s+(.+)$/i);
-          if (cdMatch) {
-            let target = cdMatch[1].trim();
-            // Remove -LiteralPath / -Path flags
-            target = target.replace(/-(?:Literal)?Path\s+/i, '');
-            // Strip surrounding quotes
-            const quoteMatch = target.match(/^["'](.+?)["']$/);
-            if (quoteMatch) target = quoteMatch[1];
-
-            const tabId = props.tab.id;
-            const currentCwd = terminalStore.getTabCwd(tabId);
-
-            if (/^[A-Za-z]:/.test(target) || /^[\/\\]/.test(target)) {
-              // Absolute path or drive switch - use as-is
-              terminalStore.setTabCwd(tabId, target);
-            } else if (currentCwd) {
-              // Relative path - resolve against current CWD
-              const sep = currentCwd.includes('/') ? '/' : '\\';
-              // Simple path join (handles .., ., normal segments)
-              const parts = [...currentCwd.split(/[\/\\]/), ...target.split(/[\/\\]/)];
-              const resolved: string[] = [];
-              for (const p of parts) {
-                if (p === '' || p === '.') continue;
-                if (p === '..') { if (resolved.length > 1) resolved.pop(); }
-                else resolved.push(p);
-              }
-              terminalStore.setTabCwd(tabId, resolved.join(sep));
-            }
+      // Buffer-based capture for command history (existing logic)
+      if (terminal) {
+        const buffer = terminal.buffer.active;
+        const currentLine = buffer.getLine(buffer.cursorY + buffer.baseY);
+        if (currentLine) {
+          const lineText = currentLine.translateToString(true);
+          const commandMatch = lineText.match(/^PS\s+[^>]*>\s*(.*)$/);
+          const commandText = commandMatch ? commandMatch[1] : lineText;
+          if (commandText.trim()) {
+            terminalStore.captureCommand(commandText);
           }
         }
       }
     }
+
     sendInput(data);
   });
 
   terminal.onResize(({ cols, rows }) => {
-    // Only send resize to server if allowed (tab is visible)
-    // This prevents sending incorrect sizes when tab is hidden
-    if (shouldSendResize && ws && sessionId) {
+    // [debug-loop] fix: Only send resize when dimensions actually change.
+    // Prevents duplicate session:resize from multiple fit() calls
+    // (TerminalView + TerminalTab both have viewport handlers that fire within 20ms).
+    if (shouldSendResize && ws && sessionId && (cols !== lastSentCols || rows !== lastSentRows)) {
+      lastSentCols = cols;
+      lastSentRows = rows;
       ws.send(JSON.stringify({ type: 'session:resize', sessionId, payload: { cols, rows }, timestamp: Date.now() }));
     }
   });
@@ -1532,11 +1555,13 @@ function handleWsMessage(msg: any) {
       if (msg.payload.success) {
         // Check if we have a sessionId to resume
         if (props.tab.sessionId) {
+          const resumeCols = terminal?.cols || 80;
+          const resumeRows = terminal?.rows || 24;
           // Try to resume existing session
           ws?.send(JSON.stringify({
             type: 'session:resume',
             sessionId: props.tab.sessionId,
-            payload: { cols: terminal?.cols || 80, rows: terminal?.rows || 24 },
+            payload: { cols: resumeCols, rows: resumeRows },
             timestamp: Date.now(),
           }));
         } else {
@@ -1562,6 +1587,9 @@ function handleWsMessage(msg: any) {
         if (sessionId) {
           terminalStore.updateTabSessionId(props.tab.id, sessionId);
         }
+        // [debug-loop] fix: unlock CWD for new session and wait for first prompt
+        terminalStore.unlockTabCwd(props.tab.id);
+        waitingForFreshPrompt = true;
         // Don't execute commands here - wait for session:started
       } else {
         // Session creation failed - likely agent not connected
@@ -1574,6 +1602,16 @@ function handleWsMessage(msg: any) {
       if (msg.payload.success) {
         sessionId = props.tab.sessionId || null;
         status.value = 'connected';
+        // [debug-loop] fix v3: After session resume, send wide-char recovery
+        // Wait for agent's bump resize to complete (~550ms), then send recovery
+        sendWideCharRecovery(600);
+
+        // Also do safeFit to ensure terminal dimensions are correct
+        setTimeout(() => {
+          if (terminal && fitAddon) {
+            safeFit();
+          }
+        }, 1000);
       } else {
         // Resume failed - session no longer exists on server
         // Remove from history to prevent zombie sessions
@@ -1604,19 +1642,35 @@ function handleWsMessage(msg: any) {
       }
       break;
     case 'session:output':
-      terminal?.write(msg.payload.data);
-      // Track CWD from raw output text (strip ANSI codes first)
-      if (msg.payload.data) {
+      if (terminal) {
+        terminal.write(msg.payload.data, () => {
+          // Callback after write is processed
+        });
+      }
+      // Track CWD from PS prompts in session:output.
+      // Only update CWD when waitingForFreshPrompt is true — this means the prompt
+      // is from the user's last command (not stale session:resume buffered output).
+      // After extracting CWD, lock it to prevent future stale prompts from overwriting.
+      if (msg.payload.data && waitingForFreshPrompt) {
         const cleanData = msg.payload.data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
         for (const rawLine of cleanData.split(/\r?\n/)) {
-          const psMatch = rawLine.match(/PS\s+([A-Za-z]:[^\r\n>]+)>/);
+          // [debug-loop] fix: match PS prompt only at end of line (after > there should be
+          // nothing or just whitespace). This prevents matching old prompt + command echo
+          // on the same line like "PS D:\> cd ./claudeworkspace"
+          const psMatch = rawLine.match(/PS\s+([A-Za-z]:[^\r\n>]+)>\s*$/);
           if (psMatch) {
-            terminalStore.setTabCwd(props.tab.id, psMatch[1].trim());
+            const newCwd = psMatch[1].trim();
+            terminalStore.setTabCwd(props.tab.id, newCwd);
+            terminalStore.lockTabCwd(props.tab.id);
+            waitingForFreshPrompt = false;
             break;
           }
-          const starshipMatch = rawLine.match(/([A-Za-z]:[^\r\n❯]+?)\s*(?:on\s+\w+\s*)?❯/);
+          const starshipMatch = rawLine.match(/([A-Za-z]:[^\r\n❯]+?)\s*(?:on\s+\w+\s*)?❯\s*$/);
           if (starshipMatch) {
-            terminalStore.setTabCwd(props.tab.id, starshipMatch[1].trim());
+            const newCwd = starshipMatch[1].trim();
+            terminalStore.setTabCwd(props.tab.id, newCwd);
+            terminalStore.lockTabCwd(props.tab.id);
+            waitingForFreshPrompt = false;
             break;
           }
         }
@@ -1703,44 +1757,10 @@ async function executeCommandsSequentially(commands: string[]) {
   console.log('[TerminalTab] Command execution complete');
 }
 
-// Setup visual viewport handling for mobile keyboard
-let viewportResizeHandler: (() => void) | null = null;
-let viewportResizeTimeout: number | null = null;
-
-function setupVisualViewportHandling() {
-  if (!('visualViewport' in window)) return;
-
-  const handleViewportChange = () => {
-    // Only fit if this tab is visible
-    if (!props.visible) return;
-
-    // Debounce: clear any pending timeout to prevent multiple queued handlers
-    if (viewportResizeTimeout !== null) {
-      clearTimeout(viewportResizeTimeout);
-    }
-
-    if (props.visible && terminal) {
-      // Delay to let the layout settle, with debounce to prevent race conditions
-      viewportResizeTimeout = window.setTimeout(() => {
-        viewportResizeTimeout = null;
-        // Double check visibility after timeout
-        if (!props.visible || !terminal) return;
-        safeFit();
-        // Scroll cursor into view after resize
-        forceScrollToBottom();
-        // [debug-loop] fix: removed terminal.refresh(0, terminal.rows - 1) — this non-public API
-        // forces a synchronous re-render that races with xterm's async write pipeline,
-        // causing characters to be dropped from the display during typing on mobile.
-      }, 100);
-    }
-  };
-
-  window.visualViewport?.addEventListener('resize', handleViewportChange);
-  window.visualViewport?.addEventListener('scroll', handleViewportChange);
-
-  // Store handler for cleanup
-  viewportResizeHandler = handleViewportChange;
-}
+// [debug-loop] fix: Removed setupVisualViewportHandling() and its variables.
+// TerminalView.vue is now the single source of truth for viewport-driven fit.
+// See comment in initTerminal() for details.
+let viewportResizeTimeout: number | null = null; // Keep for cleanup compat (always null now)
 
 // Setup touch handling to prevent pull-to-refresh
 function setupTouchHandling() {
@@ -1848,12 +1868,8 @@ function cleanup() {
     viewportResizeTimeout = null;
   }
 
-  // Cleanup visual viewport listeners
-  if (viewportResizeHandler) {
-    window.visualViewport?.removeEventListener('resize', viewportResizeHandler);
-    window.visualViewport?.removeEventListener('scroll', viewportResizeHandler);
-    viewportResizeHandler = null;
-  }
+  // [debug-loop] fix: Removed viewportResizeHandler cleanup — setupVisualViewportHandling()
+  // was removed. TerminalView.vue handles viewport cleanup via its own cleanupViewportHandling.
 
   // Save scrollback before cleanup
   saveScrollback();

@@ -49,6 +49,9 @@ export function setupWebSocket(fastify: FastifyInstance) {
           if (buffer.length > 4) {
             const seq = buffer.readUInt32LE(0);
             const audioData = buffer.subarray(4);
+            if (seq === 0) {
+              console.log(`[voice] Received first audio chunk, size: ${audioData.length}`);
+            }
             voiceAgentManager.handleAudioChunk(ws, audioData);
           }
         } catch (err) {

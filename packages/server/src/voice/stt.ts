@@ -1,4 +1,5 @@
 // packages/server/src/voice/stt.ts
+import https from 'https';
 
 interface STTConfig {
   appId: string;
@@ -37,9 +38,45 @@ export class STTService {
 
   async transcribeBuffer(): Promise<string> {
     const audioBuffer = Buffer.concat(this.buffer);
+    console.log(`[STT] Buffer size: ${audioBuffer.length} bytes, chunks: ${this.buffer.length}`);
     this.clearBuffer();
-    if (audioBuffer.length === 0) return '';
+    if (audioBuffer.length === 0) {
+      console.log('[STT] Empty buffer, skipping transcription');
+      return '';
+    }
     return this.transcribe(audioBuffer);
+  }
+
+  private httpsPost(url: string, body?: string): Promise<{ status: number; data: any }> {
+    return new Promise((resolve, reject) => {
+      const urlObj = new URL(url);
+      const options = {
+        hostname: urlObj.hostname,
+        port: 443,
+        path: urlObj.pathname + urlObj.search,
+        method: 'POST',
+        headers: body ? {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        } : {},
+      };
+
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          try {
+            resolve({ status: res.statusCode || 500, data: JSON.parse(data) });
+          } catch {
+            resolve({ status: res.statusCode || 500, data });
+          }
+        });
+      });
+
+      req.on('error', reject);
+      if (body) req.write(body);
+      req.end();
+    });
   }
 
   private async getAccessToken(): Promise<string> {
@@ -50,14 +87,18 @@ export class STTService {
 
     const url = `https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=${this.config.apiKey}&client_secret=${this.config.secretKey}`;
 
-    const response = await fetch(url, { method: 'POST' });
-    if (!response.ok) {
-      throw new Error(`Failed to get access token: ${response.statusText}`);
+    const response = await this.httpsPost(url);
+    if (response.status !== 200) {
+      throw new Error(`Failed to get access token: HTTP ${response.status}`);
     }
 
-    const data = await response.json() as { access_token: string; expires_in: number };
+    const data = response.data as { access_token?: string; expires_in?: number; error?: string };
+    if (data.error || !data.access_token) {
+      throw new Error(`Failed to get access token: ${data.error || 'no token in response'}`);
+    }
+
     this.accessToken = data.access_token;
-    this.tokenExpireTime = Date.now() + data.expires_in * 1000;
+    this.tokenExpireTime = Date.now() + (data.expires_in || 2592000) * 1000;
 
     return this.accessToken;
   }
@@ -82,25 +123,24 @@ export class STTService {
           channel: 1,
           cuid: 'remotecli-voice',
           token: token,
-          dev_pid: 80001, // 中文普通话模型
+          dev_pid: 1537, // 中文普通话（支持英文）
           len: audioBuffer.length,
           speech: audioBase64,
         };
 
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
-        });
+        console.log(`[STT] Sending to Baidu API: ${audioBuffer.length} bytes, base64 length: ${audioBase64.length}`);
+        const response = await this.httpsPost(url, JSON.stringify(requestBody));
+        console.log(`[STT] Baidu API response:`, JSON.stringify(response.data));
 
-        if (response.ok) {
-          const result = await response.json() as { err_no: number; result?: string[] };
+        if (response.status === 200) {
+          const result = response.data as { err_no: number; result?: string[]; err_msg?: string };
 
           // 百度 API 返回 err_no = 0 表示成功
           if (result.err_no === 0 && result.result && result.result.length > 0) {
+            console.log(`[STT] Transcription success: "${result.result[0]}"`);
             return result.result[0].trim();
           } else {
-            throw new Error(`STT API error: err_no=${result.err_no}`);
+            throw new Error(`STT API error: err_no=${result.err_no}, err_msg=${result.err_msg}`);
           }
         }
 
@@ -113,9 +153,9 @@ export class STTService {
         }
 
         // 不可重试的错误或重试次数用尽
-        throw new Error(`STT API error ${response.status}: ${await response.text()}`);
+        throw new Error(`STT API error ${response.status}: ${JSON.stringify(response.data)}`);
       } catch (err) {
-        // 网络错误（fetch 抛出的异常），重试
+        // 网络错误，重试
         if (attempt === maxRetries) {
           throw err;
         }

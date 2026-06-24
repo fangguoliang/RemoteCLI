@@ -182,11 +182,27 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
 
     case 'voice:start':
       // Browser starts voice session
+      console.log('[voice] voice:start received from browser');
       if (!isAgent && voiceAgentManager) {
         const browser = tunnelManager.getBrowser(ws);
-        if (browser?.agentId) {
-          voiceAgentManager.createSession(ws, browser.agentId);
+        console.log('[voice] Browser info:', browser ? { agentId: browser.agentId, userId: browser.userId } : null);
+        // Check if session already exists (to preserve mode preference)
+        const existingSession = voiceAgentManager.getSession(ws);
+        if (!existingSession) {
+          // Create new session only if it doesn't exist
+          voiceAgentManager.createSession(ws, browser?.agentId || '');
+          if (!browser?.agentId) {
+            console.log('[voice] Voice session created without agent (UI navigation only)');
+          }
+        } else {
+          console.log('[voice] Voice session already exists, preserving mode:', existingSession.mode);
+          // Update agentId if it changed
+          if (browser?.agentId && existingSession.agentId !== browser.agentId) {
+            existingSession.agentId = browser.agentId;
+          }
         }
+      } else {
+        console.warn('[voice] voice:start ignored: isAgent=', isAgent, 'voiceAgentManager=', !!voiceAgentManager);
       }
       break;
 
@@ -202,15 +218,32 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
       break;
 
     case 'voice:end':
-      // Browser ends voice session
+      // Browser ends recording session - don't remove session, just reset state
+      // Session will be cleaned up when WebSocket disconnects
+      // This preserves mode preference between recordings
       if (!isAgent && voiceAgentManager) {
-        voiceAgentManager.removeSession(ws);
+        const session = voiceAgentManager.getSession(ws);
+        if (session) {
+          session.state = 'idle';
+          console.log('[voice] Voice recording ended, session preserved with mode:', session.mode);
+        }
       }
       break;
 
     case 'voice:send':
     case 'voice:cancel':
       // Input mode controls - handled by VoiceAgentManager
+      break;
+
+    case 'voice:mode-change':
+      // Browser requests mode change (command/input)
+      if (!isAgent && voiceAgentManager && payload?.mode) {
+        const session = voiceAgentManager.getSession(ws);
+        if (session) {
+          session.mode = payload.mode;
+          console.log(`[voice] Mode changed to: ${payload.mode}`);
+        }
+      }
       break;
 
     case 'voice:action-result':
@@ -225,6 +258,17 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
       // Browser sends UI state for LLM context
       if (!isAgent && voiceAgentManager) {
         voiceAgentManager.updateUIState(ws, payload);
+        // Also update active terminal session ID if provided
+        if (payload?.activeTerminalSessionId !== undefined) {
+          voiceAgentManager.setActiveTerminalSessionId(ws, payload.activeTerminalSessionId);
+        }
+      }
+      break;
+
+    case 'voice:active-session':
+      // Browser notifies which terminal session is currently active
+      if (!isAgent && voiceAgentManager && payload?.sessionId !== undefined) {
+        voiceAgentManager.setActiveTerminalSessionId(ws, payload.sessionId);
       }
       break;
 

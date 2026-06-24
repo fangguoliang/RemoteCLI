@@ -141,12 +141,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useTerminalStore } from '../stores/terminal';
 import { useSettingsStore } from '../stores/settings';
 import TerminalTab from '../components/TerminalTab.vue';
+import { sendActiveTerminalSession } from '../services/voiceWebSocket';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -350,7 +351,20 @@ function closeTab(id: string) {
 function setActiveTab(id: string) {
   terminalStore.setActiveTab(id);
   terminalStore.focusActiveTab();
+  // Notify server about active terminal session for voice commands
+  const tab = tabs.value.find(t => t.id === id);
+  sendActiveTerminalSession(tab?.sessionId || null);
 }
+
+// Watch for active tab changes and notify server
+watch(activeTabId, (newTabId) => {
+  if (newTabId) {
+    const tab = tabs.value.find(t => t.id === newTabId);
+    sendActiveTerminalSession(tab?.sessionId || null);
+  } else {
+    sendActiveTerminalSession(null);
+  }
+});
 
 function logout() {
   authStore.clearTokens();

@@ -13,5 +13,10 @@ export const config = {
     sttLanguage: process.env.STT_LANGUAGE || 'zh',
     ttsVoice: process.env.TTS_VOICE || 'zh-CN-XiaoxiaoNeural',
     ttsRate: process.env.TTS_RATE || '+10%',
+    // 服务器端 LLM 配置（用于 UI 操作映射）
+    llmProvider: process.env.VOICE_LLM_PROVIDER || 'baidu',  // 'openai' | 'baidu' | 'none'
+    llmApiUrl: process.env.VOICE_LLM_API_URL || '',
+    llmApiKey: process.env.VOICE_LLM_API_KEY || '',
+    llmModel: process.env.VOICE_LLM_MODEL || 'ernie-speed-128k',
   },
 };

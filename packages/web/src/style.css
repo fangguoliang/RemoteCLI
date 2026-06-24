@@ -14,18 +14,18 @@
   --accent-subtle: rgba(233, 69, 96, 0.12);
   --accent-subtle-strong: rgba(233, 69, 96, 0.25);
 
-  /* === Semantic colors === */
-  --success: #4caf50;
-  --success-hover: #66bb6a;
-  --warning: #ff9800;
-  --error: #f44336;
-  --info: #4fc3f7;
-  --info-light: #81d4fa;
+  /* === Semantic colors (enhanced saturation) === */
+  --success: #22c55e;
+  --success-hover: #16a34a;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --info: #06b6d4;
+  --info-light: #22d3ee;
 
-  /* === Text hierarchy === */
-  --text-primary: #e8e8f0;
-  --text-secondary: #9ca3af;
-  --text-muted: #6b7280;
+  /* === Text hierarchy (improved contrast) === */
+  --text-primary: #f3f4f6;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
   --text-on-accent: #ffffff;
 
   /* === Borders === */
@@ -34,12 +34,12 @@
   --border-strong: rgba(255, 255, 255, 0.15);
   --border-focus: rgba(233, 69, 96, 0.5);
 
-  /* === Shadows (elevation hierarchy) === */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 20px rgba(233, 69, 96, 0.15);
-  --shadow-glow-strong: 0 0 24px rgba(233, 69, 96, 0.25);
+  /* === Shadows (enhanced elevation) === */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 30px rgba(233, 69, 96, 0.35);
+  --shadow-glow-strong: 0 0 40px rgba(233, 69, 96, 0.5);
 
   /* === Border radius === */
   --radius-sm: 6px;
@@ -63,19 +63,19 @@
   --transition-slow: 300ms ease;
   --transition-snappy: 200ms cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* === Button gradients (for depth) === */
-  --gradient-btn-danger: linear-gradient(180deg, #f44336 0%, #d32f2f 100%);
-  --gradient-btn-info: linear-gradient(180deg, #4fc3f7 0%, #0288d1 100%);
-  --gradient-btn-purple: linear-gradient(180deg, #9c27b0 0%, #7b1fa2 100%);
-  --gradient-btn-success: linear-gradient(180deg, #66bb6a 0%, #4caf50 100%);
+  /* === Button gradients (enhanced vibrancy) === */
+  --gradient-btn-danger: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
+  --gradient-btn-info: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  --gradient-btn-purple: linear-gradient(180deg, #a855f7 0%, #9333ea 100%);
+  --gradient-btn-success: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
   --gradient-btn-accent: linear-gradient(180deg, #ff6b8a 0%, #e94560 100%);
 
   /* === Inner shadows (for depth) === */
   --shadow-inset-sm: inset 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-inset-md: inset 0 2px 4px rgba(0, 0, 0, 0.3);
 
-  /* === Text shadow (for glow effects) === */
-  --text-shadow-glow: 0 0 20px rgba(233, 69, 96, 0.3);
+  /* === Text shadow (enhanced glow) === */
+  --text-shadow-glow: 0 0 30px rgba(233, 69, 96, 0.5);
 
   /* === Animation durations === */
   --duration-fast: 150ms;

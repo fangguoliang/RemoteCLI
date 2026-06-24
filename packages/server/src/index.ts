@@ -18,7 +18,9 @@ const fastify = Fastify({ logger: true });
 
 // Initialize voice system
 let voiceAgentManager: VoiceAgentManager | null = null;
+console.log(`[voice] Voice config: enabled=${config.voice.enabled}, baiduApiKey=${config.voice.baiduApiKey ? 'set' : 'NOT SET'}, llmProvider=${config.voice.llmProvider}`);
 if (config.voice.enabled && config.voice.baiduApiKey) {
+  console.log('[voice] Creating VoiceAgentManager...');
   voiceAgentManager = new VoiceAgentManager({
     stt: {
       provider: 'baidu',
@@ -31,7 +33,17 @@ if (config.voice.enabled && config.voice.baiduApiKey) {
       voice: config.voice.ttsVoice,
       rate: config.voice.ttsRate,
     },
-    llm: { timeout_ms: 10000, max_retries: 2 },
+    llm: {
+      timeout_ms: 10000,
+      max_retries: 2,
+      // 服务器端 LLM 配置
+      provider: config.voice.llmProvider as 'openai' | 'baidu' | 'none',
+      apiUrl: config.voice.llmApiUrl || undefined,
+      apiKey: config.voice.llmApiKey || undefined,
+      model: config.voice.llmModel || undefined,
+      baiduApiKey: config.voice.baiduApiKey,
+      baiduSecretKey: config.voice.baiduSecretKey,
+    },
     vad: { command_silence_ms: 800, terminal_command_silence_ms: 1200 },
   });
 

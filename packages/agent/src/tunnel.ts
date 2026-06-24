@@ -398,7 +398,9 @@ export class Tunnel {
   }
 
   private async handleVoiceInterpret(payload: unknown, sessionId?: string): Promise<void> {
+    console.log(`[Agent] handleVoiceInterpret called, sessionId: ${sessionId}`);
     if (!this.voiceLLM) {
+      console.log(`[Agent] VoiceLLM not initialized`);
       this.send({
         type: 'voice:interpret-error',
         sessionId,
@@ -409,6 +411,7 @@ export class Tunnel {
     }
 
     if (!sessionId) {
+      console.log(`[Agent] No session ID provided`);
       this.send({
         type: 'voice:interpret-error',
         payload: { message: 'No session ID provided' },
@@ -418,6 +421,7 @@ export class Tunnel {
     }
 
     const voicePayload = payload as VoiceInterpretPayload;
+    console.log(`[Agent] Calling VoiceLLM.interpret for text: "${voicePayload.text}"`);
 
     try {
       const result = await this.voiceLLM.interpret({
@@ -425,6 +429,7 @@ export class Tunnel {
         text: voicePayload.text,
       });
 
+      console.log(`[Agent] VoiceLLM result:`, result);
       this.send({
         type: 'voice:action-result',
         sessionId,

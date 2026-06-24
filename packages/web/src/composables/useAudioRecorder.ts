@@ -38,10 +38,12 @@ export function useAudioRecorder(options: UseAudioRecorderOptions) {
         }
       });
       audioContext = new AudioContext({ sampleRate: 16000 });
+      console.log(`[AudioRecorder] AudioContext sampleRate: ${audioContext.sampleRate}`);
       const source = audioContext.createMediaStreamSource(mediaStream);
 
       // Use ScriptProcessorNode for PCM access (simpler than AudioWorklet)
       processor = audioContext.createScriptProcessor(4096, 1, 1);
+      let chunkCount = 0;
       processor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
         const energy = computeEnergy(inputData);
@@ -56,9 +58,16 @@ export function useAudioRecorder(options: UseAudioRecorderOptions) {
 
           // Convert float32 to 16-bit PCM
           const pcm = float32ToPCM16(inputData);
+          if (chunkCount < 3) {
+            console.log(`[AudioRecorder] Chunk ${chunkCount}: energy=${energy.toFixed(4)}, samples=${inputData.length}, pcmBytes=${pcm.length}`);
+            chunkCount++;
+          }
           options.onAudioChunk(pcm, seq++);
         } else {
           // Silence
+          if (chunkCount < 3) {
+            console.log(`[AudioRecorder] Silence detected: energy=${energy.toFixed(4)}`);
+          }
           resetSilenceTimer();
         }
       };

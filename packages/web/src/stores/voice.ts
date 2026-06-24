@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 
-export type VoiceBarState = 'idle' | 'recording' | 'processing' | 'error';
+export type VoiceBarState = 'idle' | 'recording' | 'result' | 'error';
 
 export type VoiceMode = 'input' | 'command';
 
@@ -15,12 +15,13 @@ export const useVoiceStore = defineStore('voice', () => {
   // State
   const enabled = ref<boolean>(false);
   const barState = ref<VoiceBarState>('idle');
-  const mode = ref<VoiceMode>('input');
+  const mode = ref<VoiceMode>('command');  // 默认执行模式
   const interimText = ref<string>('');
   const inputBuffer = ref<string>('');
   const errorText = ref<string>('');
   const isTtsPlaying = ref<boolean>(false);
   const pendingConfirm = ref<PendingConfirmAction | null>(null);
+  const lastRecognizedText = ref<string>('');
 
   // Computed
   const isRecording = computed(() => barState.value === 'recording');
@@ -49,19 +50,36 @@ export const useVoiceStore = defineStore('voice', () => {
   }
 
   function setRecording(recording: boolean) {
-    barState.value = recording ? 'recording' : 'idle';
+    if (recording) {
+      barState.value = 'recording';
+    } else {
+      // 录音结束 -> 进入 result 状态（面板保持展开）
+      barState.value = 'result';
+    }
   }
 
   function toggleExpand() {
     if (barState.value === 'idle') {
-      barState.value = 'recording';
-    } else if (barState.value === 'recording') {
+      // 从 idle 打开 -> 显示上次结果
+      if (lastRecognizedText.value) {
+        barState.value = 'result';
+      } else {
+        barState.value = 'recording';
+      }
+    } else {
+      // 任何状态 -> 收起
       barState.value = 'idle';
     }
   }
 
   function setInterimText(text: string) {
     interimText.value = text;
+  }
+
+  function setLastRecognizedText(text: string) {
+    if (text && text.trim()) {
+      lastRecognizedText.value = text.trim();
+    }
   }
 
   function appendToInputBuffer(text: string) {
@@ -116,6 +134,7 @@ export const useVoiceStore = defineStore('voice', () => {
     errorText,
     isTtsPlaying,
     pendingConfirm,
+    lastRecognizedText,
     // Computed
     isRecording,
     isExpanded,
@@ -125,6 +144,7 @@ export const useVoiceStore = defineStore('voice', () => {
     setRecording,
     toggleExpand,
     setInterimText,
+    setLastRecognizedText,
     appendToInputBuffer,
     clearInputBuffer,
     switchToInputMode,

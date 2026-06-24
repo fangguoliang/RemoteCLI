@@ -17,8 +17,25 @@
       <div v-if="voiceStore.isExpanded" class="voice-bar-full">
         <div class="voice-bar-header">
           <div class="header-left">
-            <MicIcon :class="{ active: voiceStore.isRecording }" />
+            <MicIcon :active="voiceStore.isRecording" />
             <span class="voice-bar-title">语音助手</span>
+            <!-- 模式切换 - 分段控件 -->
+            <div class="mode-toggle-container">
+              <button
+                class="mode-toggle-btn"
+                :class="{ active: voiceStore.mode === 'command' }"
+                @click="voiceStore.mode !== 'command' && toggleMode()"
+              >
+                🎯 执行
+              </button>
+              <button
+                class="mode-toggle-btn"
+                :class="{ active: voiceStore.mode === 'input' }"
+                @click="voiceStore.mode !== 'input' && toggleMode()"
+              >
+                ⌨️ 输入
+              </button>
+            </div>
           </div>
           <button class="close-btn" @click="voiceStore.toggleExpand" title="收起">
             <CloseIcon />
@@ -32,6 +49,14 @@
             <span class="cursor">▌</span>
           </div>
           <div class="voice-status">{{ statusText }}</div>
+        </div>
+
+        <!-- 结果状态 - 录音结束后显示识别的文字 -->
+        <div v-else-if="(voiceStore.lastRecognizedText || voiceStore.displayText) && !voiceStore.errorText" class="voice-bar-content result">
+          <div class="last-text">
+            <div class="last-text-label">识别结果:</div>
+            <div class="last-text-content">{{ voiceStore.displayText || voiceStore.lastRecognizedText }}</div>
+          </div>
         </div>
 
         <!-- 空闲状态 -->
@@ -67,7 +92,7 @@
       :aria-label="voiceStore.isRecording ? '停止录音' : '开始录音'"
     >
       <div class="pulse-ring" v-if="voiceStore.isRecording"></div>
-      <MicIcon :class="{ active: voiceStore.isRecording }" />
+      <MicIcon :active="voiceStore.isRecording" />
     </div>
   </div>
 </template>
@@ -79,7 +104,7 @@ import { useAudioRecorder } from '../composables/useAudioRecorder';
 import { useAudioPlayer } from '../composables/useAudioPlayer';
 import {
   sendVoiceStart, sendVoiceAudio, sendVoiceVadState,
-  sendVoiceEnd, sendVoiceSend,
+  sendVoiceEnd, sendVoiceSend, isVoiceWebSocketReady,
 } from '../services/voiceWebSocket';
 import { vLongpress } from '../directives/longpress';
 import MicIcon from './icons/MicIcon.vue';
@@ -118,8 +143,8 @@ if (recorderError.value) {
 }
 
 const statusText = computed(() => {
-  if (voiceStore.mode === 'input') return '输入模式 - 说"发送"或点击按钮发送';
-  return '正在聆听...';
+  if (voiceStore.mode === 'input') return '⌨️ 输入模式 - 语音直接输入到终端';
+  return '🎯 执行模式 - 语音识别并执行命令';
 });
 
 function handleMicClick() {
@@ -132,6 +157,14 @@ function handleMicClick() {
     audioPlayer.clear();
     // 不自动收起面板，让用户手动关闭
   } else {
+    // Check WebSocket before recording
+    if (!isVoiceWebSocketReady()) {
+      voiceStore.setError('请先打开一个终端会话');
+      if (!voiceStore.isExpanded) {
+        voiceStore.toggleExpand();
+      }
+      return;
+    }
     // Start recording
     startRecording().then(() => {
       if (!recorderError.value) {
@@ -167,6 +200,18 @@ function handleCancel() {
   voiceStore.switchToCommandMode();
 }
 
+function toggleMode() {
+  if (voiceStore.mode === 'input') {
+    voiceStore.switchToCommandMode();
+  } else {
+    voiceStore.switchToInputMode();
+  }
+  // 通知服务器切换模式
+  import('../services/voiceWebSocket').then(({ sendVoiceModeChange }) => {
+    sendVoiceModeChange(voiceStore.mode);
+  });
+}
+
 function handleConfirmCancel() {
   if (voiceStore.pendingConfirm) {
     voiceStore.pendingConfirm.resolve(false);
@@ -185,7 +230,7 @@ function handleConfirmExecute() {
 <style scoped>
 .voice-container {
   position: fixed;
-  bottom: calc(48px + var(--space-4, 16px)); /* 底部栏高度(40px+padding) + 间距 */
+  bottom: calc(60px + var(--space-4, 16px)); /* 上移避免遮挡底部菜单 */
   right: var(--space-4, 16px);
   z-index: 9999;
   font-family: inherit;
@@ -298,6 +343,56 @@ function handleConfirmExecute() {
   font-weight: 600;
 }
 
+/* 模式切换 - 分段控件（拟物风格） */
+.mode-toggle-container {
+  display: flex;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.4) 0%, rgba(0, 0, 0, 0.2) 100%);
+  border-radius: 10px;
+  padding: 3px;
+  margin-left: 6px;
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.5),
+    0 1px 0 rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.3);
+}
+
+.mode-toggle-btn {
+  padding: 5px 14px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  line-height: 1.2;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+}
+
+.mode-toggle-btn:hover:not(.active) {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* 选中的按钮 - 凸起效果 */
+.mode-toggle-btn.active {
+  background: linear-gradient(180deg, rgba(80, 80, 80, 0.9) 0%, rgba(55, 55, 55, 0.95) 100%);
+  color: #ffffff;
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.4),
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  transform: translateY(-0.5px);
+}
+
+/* 按下效果 */
+.mode-toggle-btn:active:not(.active) {
+  transform: translateY(0.5px);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
 .close-btn {
   width: 32px;
   height: 32px;
@@ -328,9 +423,30 @@ function handleConfirmExecute() {
   justify-content: center;
 }
 
+.voice-bar-content.result {
+  display: flex;
+  align-items: flex-start;
+}
+
 .idle-hint {
   color: var(--text-muted, rgba(255, 255, 255, 0.5));
   font-size: 0.875rem;
+}
+
+.last-text {
+  width: 100%;
+}
+
+.last-text-label {
+  color: var(--text-muted, rgba(255, 255, 255, 0.5));
+  font-size: 0.75rem;
+  margin-bottom: 4px;
+}
+
+.last-text-content {
+  color: var(--text-primary, #fff);
+  font-size: 1rem;
+  line-height: 1.5;
 }
 
 .voice-text {

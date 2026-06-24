@@ -18,12 +18,20 @@ export class ActionExecutor {
     const { action_id, params } = action;
 
     // Terminal commands
-    if (action_id === 'terminal_execute') {
+    if (action_id === 'terminal_execute' || action_id === 'terminal_command') {
       return { type: 'terminal', data: params?.command as string, params };
+    }
+    if (action_id === 'terminal_enter') {
+      return { type: 'terminal', data: '', params };
     }
     if (action_id === 'terminal_clear' || action_id === 'terminal_scroll' ||
         action_id === 'terminal_copy' || action_id === 'terminal_paste') {
       return { type: 'terminal', params };
+    }
+    // Session management - send to browser to handle (support both colon and underscore formats)
+    if (action_id === 'session:create' || action_id === 'session_create' ||
+        action_id === 'session:close' || action_id === 'session_close') {
+      return { type: 'ui_navigation', data: action_id, params };
     }
     if (action_id === 'terminal_new_session' || action_id === 'terminal_close_session') {
       return { type: 'terminal', params };

@@ -1,72 +1,72 @@
 {
   "commands": [
     {
-      "keywords": ["打开文件管理器", "文件管理", "文件浏览", "打开文件"],
+      "keywords": ["打开文件管理器", "文件管理", "文件浏览", "打开文件", "查看文件", "切到文件", "切换到文件", "去文件", "文件页面"],
       "action_id": "navigate_file_view",
       "params": {}
     },
     {
-      "keywords": ["切换到终端", "打开终端", "回到终端"],
+      "keywords": ["切换到终端", "打开终端", "回到终端", "进入终端", "终端视图", "切到终端", "切换回终端", "回终端", "去终端", "终端页面"],
       "action_id": "navigate_terminal",
       "params": {}
     },
     {
-      "keywords": ["打开设置", "设置", "配置"],
+      "keywords": ["打开设置", "设置", "配置", "系统设置", "切到设置", "切换到设置", "去设置"],
       "action_id": "navigate_settings",
       "params": {}
     },
     {
-      "keywords": ["新建会话", "新建终端", "新标签"],
+      "keywords": ["新建会话", "新建终端", "新标签", "新建窗口"],
       "action_id": "terminal_new_session",
       "params": {}
     },
     {
-      "keywords": ["关闭标签", "关闭会话", "关闭当前"],
+      "keywords": ["关闭标签", "关闭会话", "关闭当前", "关闭页面"],
       "action_id": "terminal_close_session",
       "params": {}
     },
     {
-      "keywords": ["向上滚动", "往上滚", "滚动上面"],
+      "keywords": ["向上滚动", "往上滚", "滚动上面", "向上翻页"],
       "action_id": "terminal_scroll",
       "params": { "direction": "up" }
     },
     {
-      "keywords": ["向下滚动", "往下滚", "滚动下面"],
+      "keywords": ["向下滚动", "往下滚", "滚动下面", "向下翻页"],
       "action_id": "terminal_scroll",
       "params": { "direction": "down" }
     },
     {
-      "keywords": ["清屏", "清除屏幕"],
+      "keywords": ["清屏", "清除屏幕", "清空屏幕", "清空终端"],
       "action_id": "terminal_clear",
       "params": {}
     },
     {
-      "keywords": ["复制"],
+      "keywords": ["复制", "拷贝", "复制选中"],
       "action_id": "terminal_copy",
       "params": {}
     },
     {
-      "keywords": ["粘贴"],
+      "keywords": ["粘贴", "贴上去", "粘贴内容"],
       "action_id": "terminal_paste",
       "params": {}
     },
     {
-      "keywords": ["上一级", "返回上级", "上级目录"],
+      "keywords": ["上一级", "返回上级", "上级目录", "返回上一级"],
       "action_id": "file_go_up",
       "params": {}
     },
     {
-      "keywords": ["刷新", "刷新列表"],
+      "keywords": ["刷新", "刷新列表", "重新加载", "刷新页面"],
       "action_id": "file_refresh",
       "params": {}
     },
     {
-      "keywords": ["停止录音", "停止语音", "关闭语音"],
+      "keywords": ["停止录音", "停止语音", "关闭语音", "停止录音功能"],
       "action_id": "voice_stop",
       "params": {}
     },
     {
-      "keywords": ["最小化", "收起"],
+      "keywords": ["最小化", "收起", "折叠", "最小化面板"],
       "action_id": "voice_minimize",
       "params": {}
     }

@@ -19,6 +19,7 @@ import { useTerminalStore } from '../stores/terminal';
 import { useFileStore } from '../stores/file';
 import { useWebViewerStore } from '../stores/webViewer';
 import { fileWebSocket } from '../services/fileWebSocket';
+import { initVoiceWebSocket, clearTerminalVoiceWebSocket, sendActiveTerminalSession } from '../services/voiceWebSocket';
 import type { Tab } from '../stores/terminal';
 import MarkdownViewer from './MarkdownViewer.vue';
 import WebViewer from './WebViewer.vue';
@@ -1504,11 +1505,16 @@ function connectWebSocket() {
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
+    console.log('[TerminalTab] WebSocket opened, calling initVoiceWebSocket');
     ws?.send(JSON.stringify({
       type: 'auth',
       payload: { userId: authStore.userId, agentId: props.tab.agentId },
       timestamp: Date.now(),
     }));
+    // Initialize voice WebSocket with terminal WebSocket
+    console.log('[TerminalTab] About to call initVoiceWebSocket, ws:', ws);
+    initVoiceWebSocket(ws!);
+    console.log('[TerminalTab] initVoiceWebSocket called');
   };
 
   ws.onmessage = (event) => {
@@ -1561,6 +1567,8 @@ function handleWsMessage(msg: any) {
         // Update the tab with the sessionId for persistence
         if (sessionId) {
           terminalStore.updateTabSessionId(props.tab.id, sessionId);
+          // Notify server about active terminal session for voice commands
+          sendActiveTerminalSession(sessionId);
         }
         // Don't execute commands here - wait for session:started
       } else {
@@ -1865,6 +1873,8 @@ function cleanup() {
     // The server will handle session persistence when we disconnect
     ws.close();
   }
+  // 立即清除语音 WS 引用，避免录音时路由到已关闭的连接
+  clearTerminalVoiceWebSocket();
   terminal?.dispose();
 }
 

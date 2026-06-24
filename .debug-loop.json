@@ -1,0 +1,34 @@
+{
+  "projectType": "web",
+  "appType": "fullstack",
+  "build": {
+    "command": "pnpm build",
+    "cwd": ".",
+    "outputDir": "dist"
+  },
+  "deploy": {
+    "type": "ssh",
+    "host": "123.57.34.57",
+    "user": "root",
+    "serverPath": "/opt/remoteCli/server",
+    "webPath": "/opt/remoteCli/web",
+    "restartCommand": "pm2 restart remotecli-server"
+  },
+  "target": {
+    "url": "https://123.57.34.57",
+    "skipCertificateCheck": true
+  },
+  "successMarkers": ["[voice] STT result:", "[voice] Action executed:"],
+  "reproSteps": [
+    { "action": "goto", "url": "target" },
+    { "action": "wait", "ms": 3000 },
+    { "action": "simulate-voice", "command": "打开文件管理器" }
+  ],
+  "maxIterations": 3,
+  "testAudio": {
+    "path": ".debug-loop-test-audio.pcm",
+    "sampleRate": 16000,
+    "channels": 1,
+    "bitDepth": 16
+  }
+}

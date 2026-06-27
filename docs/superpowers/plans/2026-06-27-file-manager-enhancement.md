@@ -515,7 +515,123 @@ git commit -m "feat(web): add file type utility functions"
 
 ---
 
-### Task 6: Web — useFileOverlay Composable
+### Task 5b: Web — File Type Utility Tests
+
+**Files:**
+- Create: `packages/web/src/utils/__tests__/fileType.test.ts`
+
+- [ ] **Step 1: Write tests for fileType utilities**
+
+Create `packages/web/src/utils/__tests__/fileType.test.ts`:
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import { getFileType, isViewable, isEditable, isLargeFile, LARGE_FILE_THRESHOLD } from '../fileType';
+
+describe('getFileType', () => {
+  it('identifies markdown files', () => {
+    expect(getFileType('readme.md')).toBe('md');
+    expect(getFileType('README.MD')).toBe('md');
+  });
+
+  it('identifies text files', () => {
+    expect(getFileType('notes.txt')).toBe('txt');
+  });
+
+  it('identifies JSON files', () => {
+    expect(getFileType('config.json')).toBe('json');
+  });
+
+  it('identifies HTML files', () => {
+    expect(getFileType('page.html')).toBe('html');
+    expect(getFileType('page.htm')).toBe('html');
+  });
+
+  it('identifies PDF files', () => {
+    expect(getFileType('doc.pdf')).toBe('pdf');
+  });
+
+  it('identifies image files', () => {
+    expect(getFileType('photo.jpg')).toBe('image');
+    expect(getFileType('photo.jpeg')).toBe('image');
+    expect(getFileType('icon.png')).toBe('image');
+    expect(getFileType('anim.gif')).toBe('image');
+    expect(getFileType('photo.webp')).toBe('image');
+  });
+
+  it('returns other for unknown extensions', () => {
+    expect(getFileType('file.zip')).toBe('other');
+    expect(getFileType('file.exe')).toBe('other');
+    expect(getFileType('file.docx')).toBe('other');
+  });
+
+  it('returns other for files without extension', () => {
+    expect(getFileType('Makefile')).toBe('other');
+    expect(getFileType('README')).toBe('other');
+  });
+});
+
+describe('isViewable', () => {
+  it('returns true for viewable types', () => {
+    expect(isViewable('file.md')).toBe(true);
+    expect(isViewable('file.txt')).toBe(true);
+    expect(isViewable('file.json')).toBe(true);
+    expect(isViewable('file.html')).toBe(true);
+    expect(isViewable('file.pdf')).toBe(true);
+    expect(isViewable('file.jpg')).toBe(true);
+  });
+
+  it('returns false for non-viewable types', () => {
+    expect(isViewable('file.zip')).toBe(false);
+    expect(isViewable('file.exe')).toBe(false);
+  });
+});
+
+describe('isEditable', () => {
+  it('returns true for editable types', () => {
+    expect(isEditable('file.md')).toBe(true);
+    expect(isEditable('file.txt')).toBe(true);
+    expect(isEditable('file.json')).toBe(true);
+  });
+
+  it('returns false for non-editable types', () => {
+    expect(isEditable('file.html')).toBe(false);
+    expect(isEditable('file.pdf')).toBe(false);
+    expect(isEditable('file.jpg')).toBe(false);
+    expect(isEditable('file.zip')).toBe(false);
+  });
+});
+
+describe('isLargeFile', () => {
+  it('returns false for small files', () => {
+    expect(isLargeFile(1024)).toBe(false);
+    expect(isLargeFile(LARGE_FILE_THRESHOLD)).toBe(false);
+  });
+
+  it('returns true for files over threshold', () => {
+    expect(isLargeFile(LARGE_FILE_THRESHOLD + 1)).toBe(true);
+    expect(isLargeFile(1024 * 1024)).toBe(true);
+  });
+
+  it('returns false for undefined size', () => {
+    expect(isLargeFile(undefined)).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 2: Run tests**
+
+Run: `cd packages/web && npx vitest run src/utils/__tests__/fileType.test.ts`
+Expected: All PASS
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add packages/web/src/utils/__tests__/fileType.test.ts
+git commit -m "test(web): add tests for file type utility functions"
+```
+
+---
 
 **Files:**
 - Create: `packages/web/src/composables/useFileOverlay.ts`
@@ -793,10 +909,14 @@ const emit = defineEmits<{
   browse: [name: string];
   download: [name: string];
   preview: [name: string];       // New: open preview overlay
-  longpress: [name: string, entry: FileEntry]; // New: context menu
+  longpress: [name: string, entry: FileEntry, x: number, y: number]; // New: context menu with coords
 }>();
 
 function onEntryClick(entry: FileEntry) {
+  if (longPressTriggered) {
+    longPressTriggered = false;
+    return;
+  }
   if (entry.isDirectory) {
     emit('browse', entry.name);
   } else if (isViewable(entry.name) && !isLargeFile(entry.size)) {
@@ -807,9 +927,9 @@ function onEntryClick(entry: FileEntry) {
 }
 ```
 
-- [ ] **Step 2: Add long-press handler**
+- [ ] **Step 2: Add long-press handler with touch coordinates**
 
-Add long-press detection with 500ms threshold and haptic feedback:
+Add long-press detection with 500ms threshold, haptic feedback, and touch coordinate passing:
 
 ```vue
 <template>
@@ -838,19 +958,22 @@ let longPressTimer: ReturnType<typeof setTimeout> | null = null;
 let touchStartX = 0;
 let touchStartY = 0;
 let longPressTriggered = false;
+let longPressX = 0;
+let longPressY = 0;
 
 function onTouchStart(entry: FileEntry, e: TouchEvent) {
   touchStartX = e.touches[0].clientX;
   touchStartY = e.touches[0].clientY;
   longPressTriggered = false;
+  longPressX = touchStartX;
+  longPressY = touchStartY;
 
   longPressTimer = setTimeout(() => {
     longPressTriggered = true;
-    // Haptic feedback
     if (navigator.vibrate) {
       navigator.vibrate(50);
     }
-    emit('longpress', entry.name, entry);
+    emit('longpress', entry.name, entry, longPressX, longPressY);
   }, 500);
 }
 
@@ -859,15 +982,9 @@ function onTouchEnd() {
     clearTimeout(longPressTimer);
     longPressTimer = null;
   }
-  // If long press triggered, prevent the click event
-  if (longPressTriggered) {
-    // Click handler will still fire, but we need to prevent it
-    // Use a flag to skip the next click
-  }
 }
 
 function onTouchMove(e: TouchEvent) {
-  // Cancel long press if finger moves too much
   if (longPressTimer) {
     const dx = Math.abs(e.touches[0].clientX - touchStartX);
     const dy = Math.abs(e.touches[0].clientY - touchStartY);
@@ -877,18 +994,15 @@ function onTouchMove(e: TouchEvent) {
     }
   }
 }
-```
 
-Update `onEntryClick` to check for long press:
-
-```typescript
-function onEntryClick(entry: FileEntry) {
-  if (longPressTriggered) {
-    longPressTriggered = false;
-    return;
+// Cleanup on unmount
+import { onUnmounted } from 'vue';
+onUnmounted(() => {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
   }
-  // ... rest of existing logic
-}
+});
 ```
 
 - [ ] **Step 3: Verify compilation**
@@ -1603,11 +1717,7 @@ function onPreviewEntry(name: string) {
   fileWebSocket.downloadForView(filePath);
 }
 
-function onLongPressEntry(name: string, entry: FileEntry) {
-  // Get touch position from event (need to pass from FileList)
-  // For now, use center of screen
-  const x = window.innerWidth / 2;
-  const y = window.innerHeight / 2;
+function onLongPressEntry(name: string, entry: FileEntry, x: number, y: number) {
   contextMenuRef.value?.open(x, y, name, entry);
 }
 ```
@@ -1632,54 +1742,13 @@ git commit -m "feat(web): wire FileView with overlay, context menu, and new file
 
 ---
 
-### Task 13: Migrate FileStore viewer* State
+### Task 13: Migrate FileStore viewer* State — SKIPPED
 
-**Files:**
-- Modify: `packages/web/src/stores/file.ts`
+**Reason:** MarkdownViewer.vue is also used by the terminal (cat file.md trigger). Removing viewer* state from FileStore would break terminal md viewing.
 
-- [ ] **Step 1: Remove viewer* state from FileStore**
+**Decision:** Keep FileStore viewer* state as-is for terminal use. FileOverlay uses independent `useFileOverlay()` composable. Two state sources, but safe.
 
-The viewer state is now managed by `useFileOverlay` composable. Remove the following from `packages/web/src/stores/file.ts`:
-
-- Remove refs: `validatingPath`, `validatedPath`, `viewerVisible`, `viewerContent`, `viewerLoading`, `viewerPath`, `viewerSaving`
-- Remove setter methods: `setValidatingPath`, `setValidatedPath`, `setViewerVisible`, `setViewerContent`, `setViewerLoading`, `setViewerPath`, `setViewerSaving`, `clearViewer`
-- Remove the `ValidatedPath` interface
-
-Keep these (still used): `currentPath`, `entries`, `loading`, `error`, `transfers`, and their setters.
-
-- [ ] **Step 2: Update fileWebSocket.ts assembleViewContent**
-
-The existing `assembleViewContent()` method writes assembled content to `store.setViewerContent()`. Since the store viewer state is being removed, update this method to:
-1. Keep the `store.setViewerContent()` call temporarily (for backward compat with any terminal-based md viewer)
-2. Add the new `viewContentHandlers` notification (already added in Task 7 Step 3)
-
-The content delivery path is now:
-```
-Agent sends file:data chunks → fileWebSocket.handleFileData()
-  → if viewingPath matches → assembleViewContent()
-    → decodes base64 → detects encoding
-    → calls viewContentHandlers.forEach(h => h(path, content))
-      → FileView.onPreviewEntry's contentHandler receives it
-        → sets overlay.content.value
-```
-
-Note: `downloadForView()` already exists in fileWebSocket.ts (line 531). It sets `this.viewingPath` and sends `file:download`. No changes needed to this method.
-
-- [ ] **Step 3: Update MarkdownViewer.vue to use composable instead of store**
-
-If MarkdownViewer is still used (for the existing terminal md viewer), update it to work with the composable or keep its own local state.
-
-- [ ] **Step 4: Verify compilation**
-
-Run: `cd packages/web && npx vue-tsc --noEmit`
-Expected: No errors
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/web/src/stores/file.ts packages/web/src/services/fileWebSocket.ts packages/web/src/components/MarkdownViewer.vue
-git commit -m "refactor(web): migrate viewer state from FileStore to useFileOverlay composable"
-```
+**Files:** No changes needed.
 
 ---
 

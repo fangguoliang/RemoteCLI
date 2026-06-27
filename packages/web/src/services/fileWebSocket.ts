@@ -11,6 +11,9 @@ class FileWebSocketService {
   private viewingPath: string | null = null;
   private currentAgentId: string | null = null;
 
+  // View content delivery callbacks
+  private viewContentHandlers: ((path: string, content: string) => void)[] = [];
+
   connect(url: string, agentId?: string): Promise<void> {
     return new Promise((resolve, reject) => {
       console.log('[fileWebSocket] Connecting to URL:', url, 'agentId:', agentId);
@@ -115,6 +118,11 @@ class FileWebSocketService {
         break;
       case 'file:validated':
         this.handleFileValidated(payload as FileValidatedPayload);
+        break;
+      case 'file:create:result':
+      case 'file:rename:result':
+      case 'file:delete:result':
+        // Handled by registered handlers via this.messageHandlers
         break;
     }
   }
@@ -317,6 +325,9 @@ class FileWebSocketService {
         store.setViewerVisible(true);
         store.setValidatingPath(null);
 
+        // Notify view content handlers
+        this.viewContentHandlers.forEach(h => h(payload.path, content));
+
         // Cleanup
         this.transferChunks.delete(viewId);
         this.viewingPath = null;
@@ -369,6 +380,15 @@ class FileWebSocketService {
     if (index !== -1) {
       this.uploadCompleteHandlers.splice(index, 1);
     }
+  }
+
+  onViewContent(handler: (path: string, content: string) => void) {
+    this.viewContentHandlers.push(handler);
+  }
+
+  offViewContent(handler: (path: string, content: string) => void) {
+    const idx = this.viewContentHandlers.indexOf(handler);
+    if (idx !== -1) this.viewContentHandlers.splice(idx, 1);
   }
 
   private handleFileError(payload: FileErrorPayload) {
@@ -494,6 +514,30 @@ class FileWebSocketService {
     };
 
     reader.readAsArrayBuffer(file);
+  }
+
+  createFile(dirPath: string, fileName: string, agentId: string) {
+    this.send({
+      type: 'file:create',
+      payload: { dirPath, name: fileName, agentId },
+      timestamp: Date.now(),
+    });
+  }
+
+  renameFile(oldPath: string, newName: string) {
+    this.send({
+      type: 'file:rename',
+      payload: { oldPath, newName },
+      timestamp: Date.now(),
+    });
+  }
+
+  deleteFile(path: string, isDirectory: boolean) {
+    this.send({
+      type: 'file:delete',
+      payload: { path, isDirectory },
+      timestamp: Date.now(),
+    });
   }
 
   // Check actual connection state before validating

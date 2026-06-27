@@ -111,6 +111,34 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
       }
       break;
 
+    case 'file:create':
+    case 'file:rename':
+    case 'file:delete':
+      // Browser-initiated file operations, route to bound agent
+      {
+        console.log(`[file] ${type} received, payload:`, JSON.stringify(payload));
+        if (payload?.agentId) {
+          const bindResult = tunnelManager.bindBrowserToAgent(ws, payload.agentId);
+          console.log(`[file] bindBrowserToAgent result:`, bindResult);
+        }
+        const browser = tunnelManager.getBrowser(ws);
+        if (browser?.agentId) {
+          console.log(`[file] routing to agent:`, browser.agentId);
+          tunnelManager.routeToAgent(browser.agentId, message);
+        } else {
+          console.log(`[file] NO_AGENT error`);
+          const resultType = type === 'file:create' ? 'file:create:result'
+            : type === 'file:rename' ? 'file:rename:result'
+            : 'file:delete:result';
+          ws.send(JSON.stringify({
+            type: resultType,
+            payload: { success: false, error: 'No agent selected' },
+            timestamp: Date.now(),
+          }));
+        }
+      }
+      break;
+
     case 'file:validate':
       // Browser requests path validation
       console.log(`[file] file:validate received, sessionId: ${sessionId}, payload:`, payload);
@@ -140,6 +168,9 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
     case 'file:progress':
     case 'file:uploaded':
     case 'file:error':
+    case 'file:create:result':
+    case 'file:rename:result':
+    case 'file:delete:result':
       // Agent 返回的文件响应，路由到所有绑定到该 Agent 的浏览器
       if (isAgent) {
         const agentId = tunnelManager.getAgentIdByWs(ws);
@@ -321,9 +352,9 @@ function handleAgentRegister(ws: WebSocket, payload: any) {
 }
 
 function handleBrowserAuth(ws: WebSocket, payload: any) {
-  const { userId, agentId } = payload;
+  const { userId, agentId, sessionId } = payload;
 
-  console.log(`[auth] Browser auth request: userId=${userId}, agentId=${agentId}`);
+  console.log(`[auth] Browser auth request: userId=${userId}, agentId=${agentId}, sessionId=${sessionId || 'none'}`);
 
   if (!userId) {
     ws.send(JSON.stringify({
@@ -351,9 +382,19 @@ function handleBrowserAuth(ws: WebSocket, payload: any) {
     }
   }
 
+  // [debug-loop] fix: Store sessionId on browser connection if provided (session resume scenario)
+  // This ensures disconnectBrowser() can save sessionAgents mapping and send session:pause
+  if (sessionId) {
+    const browser = tunnelManager.getBrowser(ws);
+    if (browser) {
+      browser.sessionId = sessionId;
+      console.log(`[auth] Stored sessionId on browser connection: ${sessionId}`);
+    }
+  }
+
   // Log the browser state after auth
   const browser = tunnelManager.getBrowser(ws);
-  console.log(`[auth] Browser after auth: agentId=${browser?.agentId}`);
+  console.log(`[auth] Browser after auth: agentId=${browser?.agentId}, sessionId=${browser?.sessionId || 'none'}`);
 
   ws.send(JSON.stringify({
     type: 'auth:result',

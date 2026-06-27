@@ -73,10 +73,18 @@
       :error="error"
       @browse="onBrowseEntry"
       @download="onDownloadEntry"
+      @preview="onPreviewEntry"
+      @longpress="onLongPressEntry"
     />
 
     <!-- Transfer Progress -->
     <FileTransferProgress :transfers="transfers" />
+
+    <!-- File Overlay -->
+    <FileOverlay ref="fileOverlayRef" />
+
+    <!-- Context Menu -->
+    <ContextMenu ref="contextMenuRef" :currentPath="currentPath" @refresh="refresh" />
 
     <!-- Action Bar -->
     <div class="action-bar" v-if="selectedAgentId">
@@ -88,6 +96,9 @@
         placeholder="D: or path..."
         @keyup.enter="goToPath"
       />
+      <button class="icon-btn new-btn" @click="showCreateModal = true" title="New file" aria-label="New file">
+        <span style="font-size: 18px;">+</span>
+      </button>
       <button class="action-btn" @click="goToPath" aria-label="跳转到路径">Go</button>
       <button class="icon-btn" @click="triggerUpload" title="上传" aria-label="上传文件">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
@@ -131,6 +142,25 @@
       </div>
     </div>
 
+    <!-- Create File Modal -->
+    <div class="modal-overlay" v-if="showCreateModal" @click.self="closeCreateModal" @keydown.escape="closeCreateModal">
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-header"><h3>New File</h3></div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Filename (with extension)</label>
+            <input ref="createInput" v-model="newFileName" placeholder="e.g. notes.txt, config.json" @keyup.enter="handleCreateFile" />
+            <p class="form-hint">Supported: md, txt, json, html, etc.</p>
+            <p v-if="createError" class="form-error">{{ createError }}</p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-cancel" @click="closeCreateModal">Cancel</button>
+          <button class="btn-save" @click="handleCreateFile" :disabled="!newFileName.trim()">Create</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Footer Bar -->
     <div class="footer-bar">
       <span class="author">作者@fangguoliang</span>
@@ -139,7 +169,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useFileStore } from '@/stores/file';
@@ -149,7 +179,11 @@ import { useTerminalStore } from '@/stores/terminal';
 import { fileWebSocket } from '@/services/fileWebSocket';
 import FileList from '@/components/FileList.vue';
 import FileTransferProgress from '@/components/FileTransferProgress.vue';
+import FileOverlay from '@/components/FileOverlay.vue';
+import ContextMenu from '@/components/ContextMenu.vue';
 import { useFileShortcutsStore } from '@/stores/fileShortcuts';
+import { getFileType, isEditable } from '@/utils/fileType';
+import type { FileEntry } from '@remotecli/shared';
 
 const router = useRouter();
 const fileStore = useFileStore();
@@ -169,6 +203,93 @@ const showShortcuts = ref(false);
 const showSaveModal = ref(false);
 const shortcutName = ref('');
 const fileShortcuts = computed(() => fileShortcutsStore.shortcuts);
+
+// New file overlay and context menu
+const fileOverlayRef = ref<InstanceType<typeof FileOverlay> | null>(null);
+const contextMenuRef = ref<InstanceType<typeof ContextMenu> | null>(null);
+
+// Create file modal
+const showCreateModal = ref(false);
+const newFileName = ref('');
+const createError = ref('');
+const createInput = ref<HTMLInputElement | null>(null);
+
+watch(showCreateModal, (val) => {
+  if (val) {
+    nextTick(() => createInput.value?.focus());
+  } else {
+    newFileName.value = '';
+    createError.value = '';
+  }
+});
+
+function closeCreateModal() {
+  showCreateModal.value = false;
+}
+
+function handleCreateFile() {
+  if (!newFileName.value.trim() || !currentPath.value || !selectedAgentId.value) return;
+  createError.value = '';
+
+  fileWebSocket.createFile(currentPath.value, newFileName.value.trim(), selectedAgentId.value);
+
+  const handler = (data: unknown) => {
+    const payload = data as { success: boolean; error?: string; path?: string };
+    if (payload.success) {
+      closeCreateModal();
+      refresh();
+      // Auto-open for editing if txt/json/md
+      const ext = newFileName.value.split('.').pop()?.toLowerCase();
+      if (ext && ['txt', 'json', 'md'].includes(ext) && payload.path) {
+        setTimeout(() => {
+          const overlay = fileOverlayRef.value?.overlay;
+          if (overlay) {
+            overlay.openForEdit(payload.path!, ext as any, '');
+          }
+        }, 500);
+      }
+    } else {
+      createError.value = payload.error || 'Failed to create file';
+    }
+    fileWebSocket.off('file:create:result', handler);
+  };
+  fileWebSocket.on('file:create:result', handler);
+}
+
+function onPreviewEntry(name: string) {
+  const filePath = currentPath.value ? `${currentPath.value}\\${name}` : name;
+  const type = getFileType(name);
+
+  if (type === 'other') {
+    fileWebSocket.download(filePath);
+    return;
+  }
+
+  const overlay = fileOverlayRef.value?.overlay;
+  if (!overlay) return;
+
+  overlay.loading.value = true;
+  overlay.open(filePath, type, '');
+
+  const contentHandler = (path: string, content: string) => {
+    const normalizedPath = path.replace(/\//g, '\\');
+    const normalizedOverlay = overlay.path.value.replace(/\//g, '\\');
+    if (normalizedPath === normalizedOverlay) {
+      overlay.content.value = content;
+      overlay.loading.value = false;
+      if (!content && isEditable(name)) {
+        overlay.setMode('edit');
+      }
+      fileWebSocket.offViewContent(contentHandler);
+    }
+  };
+  fileWebSocket.onViewContent(contentHandler);
+  fileWebSocket.downloadForView(filePath);
+}
+
+function onLongPressEntry(name: string, entry: FileEntry, x: number, y: number) {
+  contextMenuRef.value?.open(x, y, name, entry);
+}
 
 const agents = computed(() => {
   console.log('[FileView] computing agents, terminalStore.agents:', terminalStore.agents);
@@ -918,6 +1039,28 @@ watch(
   background: var(--accent);
   border-color: transparent;
   color: var(--text-on-accent);
+}
+
+.new-btn {
+  background: var(--success);
+  border-color: transparent;
+  color: #fff;
+}
+
+.new-btn:hover {
+  background: var(--success-hover);
+}
+
+.form-hint {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin: var(--space-2) 0 0;
+}
+
+.form-error {
+  color: var(--error);
+  font-size: 0.85rem;
+  margin: var(--space-2) 0 0;
 }
 
 .save-icon-btn:hover:not(:disabled) {

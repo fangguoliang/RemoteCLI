@@ -6,7 +6,7 @@
         <button class="back-btn" @click="handleClose">←</button>
         <span class="file-name">{{ fileName }}</span>
         <button class="save-btn" @click="handleSave" :disabled="saving">
-          {{ saving ? '同步中...' : '保存' }}
+          {{ saving ? 'Saving...' : 'Save' }}
         </button>
       </div>
 
@@ -33,8 +33,8 @@
 
       <!-- Hint bar -->
       <div class="hint-bar">
-        <span v-if="!isEditMode">← 左滑进入编辑模式</span>
-        <span v-else>右滑返回预览模式 →</span>
+        <span v-if="!isEditMode">← Swipe left to edit</span>
+        <span v-else>Swipe right to preview →</span>
       </div>
 
       <!-- Toast -->
@@ -56,7 +56,7 @@ const store = useFileStore();
 
 const visible = computed(() => store.viewerVisible);
 const loading = computed(() => store.viewerLoading);
-const saving = computed(() => store.viewerSaving);
+const saving = ref(false);
 const storeContent = computed(() => store.viewerContent);
 const filePath = computed(() => store.viewerPath);
 
@@ -110,16 +110,14 @@ function handleClose() {
 function handleSave() {
   if (saving.value) return;
 
-  // Check WebSocket connection
   if (!fileWebSocket.isConnected()) {
-    showErrorToast('未连接到服务器，请稍后重试');
+    showErrorToast('Not connected');
     return;
   }
 
-  store.setViewerSaving(true);
+  saving.value = true;
 
-  // Upload content back to agent
-  // Convert text to base64
+  // Send upload directly, no transfer tracking
   const encoder = new TextEncoder();
   const bytes = encoder.encode(content.value);
   let binary = '';
@@ -128,26 +126,27 @@ function handleSave() {
   }
   const base64 = btoa(binary);
 
-  // Send as upload (reuse existing upload mechanism)
   const chunkSize = 1024 * 1024;
   const totalChunks = Math.ceil(base64.length / chunkSize);
   const totalSize = bytes.length;
 
-  // Add transfer to track progress
-  store.addTransfer({
-    id: filePath.value,
-    path: filePath.value,
-    fileName: fileName.value,
-    direction: 'upload',
-    percent: 0,
-    status: 'in_progress',
-  });
+  // Listen for file:uploaded to detect completion
+  const handleUploaded = (data: unknown) => {
+    const payload = data as { path: string; success: boolean; error?: string };
+    if (payload.path === filePath.value) {
+      if (payload.success) {
+        showSuccessToast('Saved');
+      } else {
+        showErrorToast('Save failed, retry');
+      }
+      saving.value = false;
+      fileWebSocket.off('file:uploaded', handleUploaded);
+    }
+  };
+  fileWebSocket.on('file:uploaded', handleUploaded);
 
   for (let i = 0; i < totalChunks; i++) {
-    const start = i * chunkSize;
-    const end = Math.min(start + chunkSize, base64.length);
-    const chunk = base64.substring(start, end);
-
+    const chunk = base64.substring(i * chunkSize, Math.min((i + 1) * chunkSize, base64.length));
     fileWebSocket.sendMessage({
       type: 'file:upload',
       payload: {
@@ -162,21 +161,6 @@ function handleSave() {
     });
   }
 }
-
-// Watch for upload completion
-watch(() => store.transfers.find(t => t.path === filePath.value)?.status, (status) => {
-  if (status === 'completed') {
-    store.setViewerSaving(false);
-    showSuccessToast('已同步到 Agent');
-    // Clean up transfer after success
-    setTimeout(() => store.removeTransfer(filePath.value), 100);
-  } else if (status === 'error') {
-    store.setViewerSaving(false);
-    showErrorToast('同步失败，请重试');
-    // Clean up transfer after error
-    setTimeout(() => store.removeTransfer(filePath.value), 100);
-  }
-});
 
 function showSuccessToast(message: string) {
   isErrorToast.value = false;

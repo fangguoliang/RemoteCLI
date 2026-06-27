@@ -156,6 +156,66 @@ export class Tunnel {
           this.handleFileValidate(payload, sessionId);
           break;
 
+        case 'file:create': {
+          const { dirPath, name } = payload;
+          this.fileManager.createFile(dirPath, name)
+            .then((result) => {
+              this.send({
+                type: 'file:create:result',
+                payload: { success: true, path: result.path },
+                timestamp: Date.now(),
+              });
+            })
+            .catch((err: Error) => {
+              this.send({
+                type: 'file:create:result',
+                payload: { success: false, error: err.message },
+                timestamp: Date.now(),
+              });
+            });
+          break;
+        }
+
+        case 'file:rename': {
+          const { oldPath, newName } = payload;
+          this.fileManager.renameFile(oldPath, newName)
+            .then(() => {
+              this.send({
+                type: 'file:rename:result',
+                payload: { success: true },
+                timestamp: Date.now(),
+              });
+            })
+            .catch((err: Error) => {
+              this.send({
+                type: 'file:rename:result',
+                payload: { success: false, error: err.message },
+                timestamp: Date.now(),
+              });
+            });
+          break;
+        }
+
+        case 'file:delete': {
+          const { path: filePath, isDirectory } = payload;
+          this.fileManager.deleteFile(filePath, isDirectory)
+            .then(() => {
+              this.send({
+                type: 'file:delete:result',
+                payload: { success: true },
+                timestamp: Date.now(),
+              });
+            })
+            .catch((err: Error) => {
+              this.send({
+                type: 'file:delete:result',
+                payload: { success: false, error: err.message },
+                timestamp: Date.now(),
+              });
+            });
+          break;
+        }
+
         case 'http:request':
           // [debug-loop] fix: pass session CWD so agent can resolve relative file paths
           handleHttpRequest(this.ws!, message, sessionId ? this.ptyManager.getWorkingDirectory(sessionId) : null);

@@ -71,6 +71,7 @@ class TunnelManager {
   // 浏览器断开 - 不再关闭会话，而是暂停会话
   disconnectBrowser(ws: WebSocket) {
     const browser = this.browsers.get(ws);
+    console.log(`[tunnel] disconnectBrowser called, browser=${browser ? 'exists' : 'null'}, agentId=${browser?.agentId ?? 'null'}`);
     if (browser) {
       // Clean up voice session (handled in index.ts where voiceAgentManager is available)
       // voiceAgentManager?.removeSession(ws);
@@ -79,7 +80,9 @@ class TunnelManager {
       if (browser.agentId) {
         const browserSet = this.agentBrowsers.get(browser.agentId);
         if (browserSet) {
+          const had = browserSet.has(ws);
           browserSet.delete(ws);
+          console.log(`[tunnel] disconnectBrowser: removed from agentBrowsers[${browser.agentId}], had=${had}, remaining=${browserSet.size}`);
           if (browserSet.size === 0) {
             this.agentBrowsers.delete(browser.agentId);
           }
@@ -137,12 +140,16 @@ class TunnelManager {
   bindBrowserToAgent(ws: WebSocket, agentId: string): boolean {
     const browser = this.browsers.get(ws);
     if (browser && this.agents.has(agentId)) {
+      const previousAgentId = browser.agentId;
       browser.agentId = agentId;
       // Add to agentBrowsers mapping for file operations
       if (!this.agentBrowsers.has(agentId)) {
         this.agentBrowsers.set(agentId, new Set());
       }
-      this.agentBrowsers.get(agentId)!.add(ws);
+      const browserSet = this.agentBrowsers.get(agentId)!;
+      const alreadyInSet = browserSet.has(ws);
+      browserSet.add(ws);
+      console.log(`[tunnel] bindBrowserToAgent: agentId=${agentId}, previousAgentId=${previousAgentId}, alreadyInSet=${alreadyInSet}, totalBrowsers=${browserSet.size}`);
       return true;
     }
     return false;
@@ -201,13 +208,32 @@ class TunnelManager {
   // 路由文件消息：Agent -> 所有绑定到该 Agent 的浏览器
   routeFileMessageToBrowsers(agentId: string, message: unknown): void {
     const browserSet = this.agentBrowsers.get(agentId);
+    const msg = message as { type?: string; payload?: { chunkIndex?: number; totalChunks?: number; path?: string; content?: string } };
+    const chunkInfo = msg?.payload?.chunkIndex !== undefined
+      ? `chunk=${msg.payload.chunkIndex}/${msg.payload.totalChunks} contentLen=${msg.payload.content?.length ?? 0}`
+      : '';
+    console.log(`[tunnel] routeFileMessageToBrowsers: agent=${agentId} type=${msg?.type} ${chunkInfo} browsers=${browserSet?.size ?? 0}`);
     if (browserSet) {
       const messageStr = JSON.stringify(message);
+      console.log(`[tunnel] serialized message size: ${messageStr.length} bytes`);
+      let sentCount = 0;
       for (const browserWs of browserSet) {
+        console.log(`[tunnel] browser ws readyState=${browserWs.readyState} (OPEN=1)`);
         if (browserWs.readyState === WebSocket.OPEN) {
-          browserWs.send(messageStr);
+          try {
+            browserWs.send(messageStr);
+            sentCount++;
+            console.log(`[tunnel] send OK`);
+          } catch (err) {
+            console.error(`[tunnel] send FAILED:`, err);
+          }
+        } else {
+          console.log(`[tunnel] SKIP: ws not open`);
         }
       }
+      console.log(`[tunnel] sent ${sentCount}/${browserSet.size} browsers`);
+    } else {
+      console.log(`[tunnel] NO BROWSER SET for agent ${agentId}`);
     }
   }
 

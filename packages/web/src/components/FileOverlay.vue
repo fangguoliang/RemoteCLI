@@ -38,7 +38,7 @@
             <textarea v-else class="text-editor" :style="{ fontSize: fontSize + 'px' }" :value="overlay.content.value" @input="onTextInput" spellcheck="false"></textarea>
           </template>
 
-          <!-- HTML/PDF iframe -->
+          <!-- HTML/PDF viewer -->
           <div v-else-if="overlay.fileType.value === 'html' || overlay.fileType.value === 'pdf'" class="iframe-container">
             <!-- Device width toggle for HTML -->
             <div v-if="overlay.fileType.value === 'html'" class="device-toggle" :class="{ vertical: isHtmlFullscreen }">
@@ -58,7 +58,13 @@
               </template>
             </div>
             <div class="iframe-wrapper" :class="`device-${deviceWidth}`">
-              <iframe :src="iframeSrc" class="iframe-viewer" sandbox="allow-same-origin"></iframe>
+              <!-- [pdf-fix] Use PDF.js for universal PDF rendering on mobile -->
+              <PdfViewer v-if="overlay.fileType.value === 'pdf' && pdfBlobUrl"
+                         :blobUrl="pdfBlobUrl"
+                         @download="handleDownload"
+                         class="iframe-viewer" />
+              <iframe v-else-if="overlay.fileType.value === 'html'"
+                      :src="iframeSrc" class="iframe-viewer" @load="onIframeLoad" @error="onIframeError"></iframe>
             </div>
           </div>
 
@@ -78,12 +84,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { MdEditor, MdPreview } from 'md-editor-v3';
 import 'md-editor-v3/lib/style.css';
 import { useFileOverlay } from '@/composables/useFileOverlay';
 import { fileWebSocket } from '@/services/fileWebSocket';
+import { blackbox } from '@/utils/eventLogger';
+import PdfViewer from './PdfViewer.vue';
 
 const router = useRouter();
 const overlay = useFileOverlay();
@@ -95,6 +103,7 @@ router.afterEach(() => {
       // Silently discard changes when navigating away
       overlay.dirty.value = false;
     }
+    fileWebSocket.cancelViewing();
     overlay.close();
   }
 });
@@ -105,6 +114,81 @@ const deviceWidth = ref<'mobile' | 'tablet' | 'desktop'>('mobile');
 const isFullscreen = ref(false);
 const contentRef = ref<HTMLElement | null>(null);
 let toastTimeout: ReturnType<typeof setTimeout> | null = null;
+
+// [pdf-fix] Blob URL for PDF (data URLs for large PDFs show blank on mobile browsers)
+const pdfBlobUrl = ref('');
+
+// [swipe-nav-fix] Push a history state when overlay opens to trap browser swipe-back gesture.
+// When the user swipes back, popstate fires → we close the overlay instead of navigating away.
+let overlayHistoryPushed = false;
+
+function onPopStateCloseOverlay() {
+  if (overlayHistoryPushed && overlay.visible.value) {
+    overlayHistoryPushed = false;
+    handleClose();
+    // Signal to FileView's popstate handler that we handled this swipe-back
+    (window as any).__swipeBackHandled = true;
+    setTimeout(() => { (window as any).__swipeBackHandled = false; }, 100);
+  }
+}
+
+window.addEventListener('popstate', onPopStateCloseOverlay);
+
+// Push a dummy history state when overlay opens, so swipe-back triggers popstate (→ close overlay)
+// instead of actual browser back navigation
+watch(() => overlay.visible.value, (visible) => {
+  if (visible && !overlayHistoryPushed) {
+    history.pushState({ fileOverlay: true }, '');
+    overlayHistoryPushed = true;
+  }
+});
+
+// [pdf-fix] Convert PDF base64 content to blob URL for iframe display.
+// Data URLs for large PDFs (>1MB) show blank on mobile browsers.
+// Blob URLs are rendered natively by the browser's PDF plugin.
+watch(
+  () => overlay.content.value,
+  (content) => {
+    if (overlay.fileType.value !== 'pdf') return;
+    // Revoke old blob URL to prevent memory leak
+    if (pdfBlobUrl.value) {
+      URL.revokeObjectURL(pdfBlobUrl.value);
+      pdfBlobUrl.value = '';
+    }
+    if (!content) return;
+    try {
+      const binaryString = atob(content);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      pdfBlobUrl.value = URL.createObjectURL(blob);
+      blackbox.log('pdf', 'pdf:blob-created', { blobSize: blob.size, contentLen: content.length });
+    } catch (err) {
+      blackbox.log('pdf', 'pdf:blob-error', { error: String(err) });
+    }
+  }
+);
+
+// [pdf-fix] Clean up blob URL when overlay closes or fileType changes away from PDF
+watch(
+  () => [overlay.visible.value, overlay.fileType.value] as const,
+  ([visible, fileType]) => {
+    if ((!visible || fileType !== 'pdf') && pdfBlobUrl.value) {
+      URL.revokeObjectURL(pdfBlobUrl.value);
+      pdfBlobUrl.value = '';
+    }
+  }
+);
+
+onBeforeUnmount(() => {
+  window.removeEventListener('popstate', onPopStateCloseOverlay);
+  if (pdfBlobUrl.value) {
+    URL.revokeObjectURL(pdfBlobUrl.value);
+    pdfBlobUrl.value = '';
+  }
+});
 
 // HTML fullscreen: hide header, show vertical sidebar
 const isHtmlFullscreen = computed(() => isFullscreen.value && overlay.fileType.value === 'html');
@@ -118,28 +202,81 @@ let touchStartTarget: HTMLElement | null = null;
 
 function onTouchStartCapture(e: TouchEvent) {
   touchStartTarget = e.target as HTMLElement;
+  blackbox.log('overlay-touch', 'fileoverlay:touchstart', {
+    x: e.touches[0].clientX,
+    y: e.touches[0].clientY,
+    targetClass: touchStartTarget?.className?.slice(0, 50) || 'unknown',
+    isToolbar: !!touchStartTarget?.closest('.md-editor-toolbar, .md-b-toolbar, .md-editor-toolbar-wrapper'),
+    isScrollable: !!touchStartTarget?.closest('.text-preview, .text-editor, .overlay-md, .md-editor, .md-editor-preview-wrap'),
+  });
 }
 
 function onTouchMove(e: TouchEvent) {
-  // Don't interfere with toolbar scrolling
-  if (touchStartTarget?.closest('.md-editor-toolbar, .md-b-toolbar, .md-editor-toolbar-wrapper')) return;
-  // Don't interfere with elements that have their own scroll
-  if (touchStartTarget?.closest('.text-preview, .text-editor, .overlay-md, .md-editor')) return;
   const dx = Math.abs(e.touches[0].clientX - swipeStartX);
   const dy = Math.abs(e.touches[0].clientY - swipeStartY);
-  if (dx > dy && dx > 10) {
-    e.preventDefault();
+  const isHorizontal = dx > dy;
+
+  // For toolbar: still prevent horizontal swipe that would trigger browser navigation
+  if (touchStartTarget?.closest('.md-editor-toolbar, .md-b-toolbar, .md-editor-toolbar-wrapper')) {
+    if (isHorizontal && dx > 10) {
+      e.preventDefault();
+      blackbox.log('overlay-touch', 'fileoverlay:touchmove-blocked-toolbar', { dx, dy, prevented: true });
+    }
+    return;
   }
+  // Allow scroll on text/md content elements
+  if (touchStartTarget?.closest('.text-preview, .text-editor, .overlay-md, .md-editor, .md-editor-preview-wrap')) {
+    // [md-fix] Check if content is scrollable horizontally (wide tables, code blocks, etc.)
+    const scrollContainer = touchStartTarget?.closest('.overlay-md') as HTMLElement;
+    if (scrollContainer && scrollContainer.scrollWidth > scrollContainer.clientWidth) {
+      // Content is wider than container - allow horizontal scroll
+      return;
+    }
+    // Content fits or no overflow - prevent horizontal swipe to avoid browser navigation
+    if (isHorizontal && dx > 30) {
+      e.preventDefault();
+      blackbox.log('overlay-touch', 'fileoverlay:touchmove-blocked-content', { dx, dy, prevented: true });
+    }
+    return;
+  }
+  // [pdf-fix] Allow horizontal scroll in PDF viewer when zoomed (content wider than container)
+  const pdfViewer = touchStartTarget?.closest('.pdf-viewer') as HTMLElement;
+  if (pdfViewer) {
+    // Check if PDF content is scrollable horizontally (zoomed in)
+    if (pdfViewer.scrollWidth > pdfViewer.clientWidth) {
+      // Allow horizontal scrolling - don't prevent default
+      return;
+    }
+    // If not zoomed, prevent horizontal swipe to avoid browser navigation
+    if (isHorizontal && dx > 10) {
+      e.preventDefault();
+    }
+    return;
+  }
+  // For all other areas, prevent horizontal swipe
+  if (isHorizontal && dx > 10) {
+    e.preventDefault();
+    blackbox.log('overlay-touch', 'fileoverlay:touchmove-blocked-other', { dx, dy, prevented: true });
+  }
+}
+
+function onTouchEndCapture(e: TouchEvent) {
+  blackbox.log('overlay-touch', 'fileoverlay:touchend', {
+    targetClass: touchStartTarget?.className?.slice(0, 50) || 'unknown',
+    changedTouches: e.changedTouches.length,
+  });
 }
 
 onMounted(() => {
   contentRef.value?.addEventListener('touchstart', onTouchStartCapture, { passive: true, capture: true });
   contentRef.value?.addEventListener('touchmove', onTouchMove, { passive: false });
+  contentRef.value?.addEventListener('touchend', onTouchEndCapture, { passive: true, capture: true });
 });
 
 onBeforeUnmount(() => {
   contentRef.value?.removeEventListener('touchstart', onTouchStartCapture, { capture: true });
   contentRef.value?.removeEventListener('touchmove', onTouchMove);
+  contentRef.value?.removeEventListener('touchend', onTouchEndCapture, { capture: true });
 });
 
 const fileName = computed(() => {
@@ -169,7 +306,8 @@ const iframeSrc = computed(() => {
     return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
   }
   if (overlay.fileType.value === 'pdf') {
-    return `data:application/pdf;base64,${overlay.content.value}`;
+    // [pdf-fix] Use blob URL for PDF - data URLs show blank for large PDFs on mobile browsers
+    return pdfBlobUrl.value || 'about:blank';
   }
   return '';
 });
@@ -198,10 +336,27 @@ function onImageError() {
   showErrorToast('Failed to load image');
 }
 
+function onIframeLoad() {
+  blackbox.log('pdf', 'iframe:loaded', {
+    fileType: overlay.fileType.value,
+    src: iframeSrc.value?.substring(0, 60) || '(empty)',
+  });
+}
+
+function onIframeError() {
+  blackbox.log('pdf', 'iframe:error', {
+    fileType: overlay.fileType.value,
+    src: iframeSrc.value?.substring(0, 60) || '(empty)',
+  });
+  showErrorToast('Failed to load file in viewer');
+}
+
 function handleClose() {
   if (overlay.dirty.value && overlay.mode.value === 'edit') {
     if (!confirm('Discard changes?')) return;
   }
+  // Clean up fileWebSocket viewing state to prevent orphaned chunks from triggering downloads
+  fileWebSocket.cancelViewing();
   overlay.close();
 }
 
@@ -223,10 +378,12 @@ function handleTouchStart(e: TouchEvent) {
 
 function handleTouchEnd(e: TouchEvent) {
   if (!canEdit.value) return;
-  // Skip swipe if touch started on toolbar or scrollable content
+  // Skip swipe if touch started on toolbar
   const target = touchStartTarget || (e.target as HTMLElement);
   if (target.closest('.md-editor-toolbar, .md-b-toolbar, .md-editor-toolbar-wrapper')) return;
-  if (target.closest('.text-preview, .text-editor, .overlay-md, .md-editor')) return;
+  // Skip if touch started on text preview/editor (not swipeable)
+  if (target.closest('.text-preview, .text-editor')) return;
+
   const endX = e.changedTouches[0].clientX;
   const endY = e.changedTouches[0].clientY;
   const dx = endX - swipeStartX;
@@ -234,6 +391,19 @@ function handleTouchEnd(e: TouchEvent) {
 
   // Must be primarily horizontal: horizontal distance > 2x vertical, and > 100px
   if (Math.abs(dx) > 100 && Math.abs(dx) > dy * 2) {
+    // [md-fix] For MD content, only switch mode if it's a deliberate swipe
+    // (user intentionally swiped from edge or made a very large movement)
+    if (target.closest('.overlay-md, .md-editor')) {
+      // Check if this looks like an intentional swipe gesture
+      // vs just scrolling horizontally through wide content
+      const isEdgeSwipe = swipeStartX < 50 || swipeStartX > window.innerWidth - 50;
+      const isLargeSwipe = Math.abs(dx) > 150;
+      if (!isEdgeSwipe && !isLargeSwipe) {
+        // Small swipe in middle of content - likely just scrolling, don't switch mode
+        return;
+      }
+    }
+
     if (dx < 0 && overlay.mode.value === 'view') {
       overlay.setMode('edit');
     } else if (dx > 0 && overlay.mode.value === 'edit') {
@@ -297,7 +467,57 @@ if (typeof document !== 'undefined') {
 }
 
 function handleDownload() {
-  fileWebSocket.download(overlay.path.value);
+  // [pdf-fix] Download directly from existing overlay content (already in memory).
+  // This avoids the WebSocket re-download which has a race condition:
+  // cancelViewing() clears viewing state, then download() triggers a new request,
+  // but file:data handlers can be dropped or timing-mismatched causing silent failure.
+  const content = overlay.content.value;
+  const filePath = overlay.path.value;
+  blackbox.log('pdf', 'pdf:download-clicked', {
+    hasContent: !!content,
+    contentLen: content?.length ?? 0,
+    path: filePath,
+    fileType: overlay.fileType.value,
+  });
+  if (!content || !filePath) return;
+
+  const fileName = filePath.split(/[/\\]/).pop() || 'download';
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  const mimeTypes: Record<string, string> = {
+    'pdf': 'application/pdf',
+    'html': 'text/html', 'htm': 'text/html',
+    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+    'png': 'image/png', 'gif': 'image/gif',
+    'webp': 'image/webp', 'svg': 'image/svg+xml', 'bmp': 'image/bmp',
+    'txt': 'text/plain', 'json': 'application/json',
+    'md': 'text/markdown',
+  };
+  const mimeType = mimeTypes[ext] || 'application/octet-stream';
+
+  let blob: Blob;
+  const isBinaryExt = ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext);
+  if (isBinaryExt) {
+    // Decode base64 → binary → Blob
+    const binaryString = atob(content);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    blob = new Blob([bytes], { type: mimeType });
+  } else {
+    // Text content: encode as UTF-8
+    const bytes = new TextEncoder().encode(content);
+    blob = new Blob([bytes], { type: mimeType });
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function handleSave() {
@@ -387,15 +607,33 @@ defineExpose({ overlay });
   background: var(--bg-root);
   display: flex;
   flex-direction: column;
-  touch-action: none; /* block ALL browser touch gestures including swipe navigation */
+  /* touch-action removed - was 'none' which blocked vertical scrolling via CSS inheritance.
+     Horizontal swipe prevention is handled by JS touchmove preventDefault handler. */
 }
 
-/* Allow vertical scrolling on content elements */
+/* Do NOT set touch-action on content elements - let MdEditor's internal touch-action: none
+   block swipe-back at root level, while the browser detects overflow:auto child for vertical scroll.
+   overscroll-behavior: none prevents edge glow / overscroll navigation. */
 .file-overlay .text-preview,
 .file-overlay .text-editor,
 .file-overlay .overlay-md,
 .file-overlay .md-editor {
-  touch-action: pan-y;
+  overscroll-behavior: none;
+}
+
+/* MD toolbar: allow horizontal scroll, block browser swipe navigation */
+.file-overlay :deep(.md-editor-toolbar),
+.file-overlay :deep(.md-b-toolbar) {
+  touch-action: pan-x;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  flex-wrap: nowrap !important;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.file-overlay :deep(.md-editor-toolbar)::-webkit-scrollbar,
+.file-overlay :deep(.md-b-toolbar)::-webkit-scrollbar {
+  display: none;
 }
 
 /* HTML fullscreen: maximize iframe area */
@@ -436,7 +674,7 @@ defineExpose({ overlay });
   min-width: 44px;
 }
 
-.back-btn { background: transparent; color: var(--text-primary); }
+.back-btn { background: transparent; color: var(--text-primary); touch-action: manipulation; }
 .edit-btn { background: var(--bg-surface-elevated); color: var(--info); border: 1px solid var(--border-default); }
 .save-btn { background: var(--success); color: #fff; }
 .save-btn:disabled { opacity: 0.5; cursor: not-allowed; }

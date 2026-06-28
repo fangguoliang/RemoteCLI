@@ -78,10 +78,11 @@ await fastify.register(blackboxRoutes);
 fastify.get('/api/health', async () => ({ status: 'ok', timestamp: Date.now() }));
 
 // Serve static files from web directory
-const webPath = join(__dirname, '../../web');
+const webPath = join(__dirname, '../web');
 const mimeTypes: Record<string, string> = {
   '.html': 'text/html',
   '.js': 'application/javascript',
+  '.mjs': 'application/javascript',
   '.css': 'text/css',
   '.json': 'application/json',
   '.png': 'image/png',

@@ -23,7 +23,6 @@ import { useFileStore } from '../stores/file';
 import { useWebViewerStore } from '../stores/webViewer';
 import { fileWebSocket } from '../services/fileWebSocket';
 import { initVoiceWebSocket, clearTerminalVoiceWebSocket, sendActiveTerminalSession } from '../services/voiceWebSocket';
-import { blackbox } from '../utils/eventLogger';
 import type { Tab } from '../stores/terminal';
 import MarkdownViewer from './MarkdownViewer.vue';
 import WebViewer from './WebViewer.vue';
@@ -48,12 +47,6 @@ let userScrolledUp = false; // Track if user manually scrolled up from bottom
 // TerminalView + TerminalTab both having viewport handlers).
 let lastSentCols = 0;
 let lastSentRows = 0;
-
-// [debug-loop] Track safeFit execution stats for debug panel
-let safeFitStats = { calls: 0, skipped: 0, fitted: 0, lastRectH: 0, lastCols: 0, lastRows: 0 };
-
-// [debug-loop] Track session:output message count
-let sessionOutputCount = 0;
 
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
@@ -269,12 +262,6 @@ function handleHtmlPathClick(matchedPath: string) {
 
 // Browser visibility change handler (minimize, tab switch, mobile app switch)
 let visibilityHandler: (() => void) | null = null;
-// [debug-loop] fix v2: Handle bfcache restoration on mobile browsers
-// iOS Safari aggressively uses bfcache for back/forward navigation.
-// When page is restored, WebSocket is closed but Vue components are NOT
-// re-mounted (page state is preserved), so no reconnect happens.
-// The pageshow event with persisted=true detects bfcache restoration.
-let pageshowHandler: ((e: PageTransitionEvent) => void) | null = null;
 
 onMounted(() => {
   // Register CWD buffer parser so FileView can parse CWD from terminal buffer directly
@@ -293,27 +280,6 @@ onMounted(() => {
     }
   };
   document.addEventListener('visibilitychange', visibilityHandler);
-
-  // [debug-loop] fix v2: Handle bfcache restoration (mobile Safari)
-  // When user navigates away via browser back/forward button and returns,
-  // the page may be restored from bfcache. WebSocket is closed but Vue
-  // components are NOT re-mounted. Detect this and reconnect.
-  pageshowHandler = (event: PageTransitionEvent) => {
-    console.log('[TerminalTab][pageshow] persisted:', event.persisted, 'tab:', props.tab.id,
-      'ws.readyState:', ws?.readyState, 'sessionId:', props.tab.sessionId || 'none');
-    if (event.persisted) {
-      // Page was restored from bfcache
-      if (props.visible && (!ws || ws.readyState !== WebSocket.OPEN)) {
-        console.log('[TerminalTab][pageshow] bfcache restored, reconnecting WebSocket');
-        connectWebSocket();
-      } else if (props.visible && terminal && sessionId) {
-        // WebSocket is open but page was restored - refresh terminal
-        console.log('[TerminalTab][pageshow] bfcache restored, WS open, sending recovery');
-        sendWideCharRecovery(200);
-      }
-    }
-  };
-  window.addEventListener('pageshow', pageshowHandler);
 });
 
 onUnmounted(() => {
@@ -325,10 +291,6 @@ onUnmounted(() => {
   if (visibilityHandler) {
     document.removeEventListener('visibilitychange', visibilityHandler);
     visibilityHandler = null;
-  }
-  if (pageshowHandler) {
-    window.removeEventListener('pageshow', pageshowHandler);
-    pageshowHandler = null;
   }
   cleanup();
 });
@@ -360,12 +322,6 @@ function sendWideCharRecovery(delayMs: number = 600) {
 }
 
 watch(() => props.visible, (visible, wasVisible) => {
-  blackbox.log('navigation', 'TerminalTab:visible', {
-    tabId: props.tab.id?.slice(-6),
-    visible, wasVisible,
-    terminalInitialized,
-    hasTerminal: !!terminal,
-  });
   // Initialize terminal when becoming visible for the first time
   if (visible && !terminalInitialized) {
     initTerminal();
@@ -393,23 +349,7 @@ watch(() => props.visible, (visible, wasVisible) => {
     // that corrupt Claude Code TUI state.
     requestAnimationFrame(() => {
       if (!terminal) return;
-      const prevCols = terminal.cols;
-      const prevRows = terminal.rows;
       safeFit();
-
-      // [debug-loop] fix: After safeFit, xterm might not re-render if dimensions
-      // didn't change (e.g., when switching back from file manager with same viewport).
-      // Force refresh to ensure canvas is properly redrawn on Android Chrome.
-      if (terminal.cols === prevCols && terminal.rows === prevRows) {
-        try {
-          (terminal as any).refresh(0, terminal.rows - 1);
-          blackbox.log('fit', 'fitter:refresh', {
-            tabId: props.tab.id?.slice(-6),
-            cols: terminal.cols, rows: terminal.rows,
-            reason: 'visible-switch-no-dim-change',
-          });
-        } catch { /* refresh might not be available */ }
-      }
 
       requestAnimationFrame(() => {
         if (!terminal) return;
@@ -468,6 +408,17 @@ function forceScrollToBottom() {
   }
 }
 
+// [debug-loop] fix: Get line text for cross-line lookback.
+// translateToString(true) trimRight strips fullwidth trail cells (width=0) at line end,
+// which can also discard the lead cell of the last Chinese character when it sits at
+// the visual wrap boundary. Use translateToString(false) + manual ASCII-only trim.
+function getLineTextForLookback(line: any): string {
+  const raw = line.translateToString(false);
+  const trimmed = raw.replace(/[ \t]+$/, '');
+  console.log('[getLineTextForLookback] raw.length:', raw.length, 'trimmed.length:', trimmed.length, 'raw:', JSON.stringify(raw.substring(0, 80)), 'trimmed:', JSON.stringify(trimmed.substring(0, 80)));
+  return trimmed;
+}
+
 // Build a mapping from string index to cell position for a terminal line.
 // translateToString(true) skips trail cells of fullwidth characters (e.g., Chinese),
 // so string index != cell position when fullwidth chars are present.
@@ -513,45 +464,13 @@ function setupScrollTracking() {
 
 // Safely fit terminal - only when tab is visible and container has valid size
 function safeFit() {
-  safeFitStats.calls++;
-  if (!props.visible || !terminal || !fitAddon || !terminalRef.value) {
-    safeFitStats.skipped++;
-    (window as any).__safeFitStats = { ...safeFitStats, reason: !props.visible ? 'notVisible' : !terminal ? 'noTerminal' : !fitAddon ? 'noFitAddon' : 'noRef' };
-    return;
-  }
+  if (!props.visible || !terminal || !fitAddon || !terminalRef.value) return;
 
   const rect = terminalRef.value.getBoundingClientRect();
-  safeFitStats.lastRectH = Math.round(rect.height);
-  if (rect.width <= 0 || rect.height <= 0) {
-    safeFitStats.skipped++;
-    (window as any).__safeFitStats = { ...safeFitStats, reason: 'zeroRect' };
-    console.log('[TerminalTab][safeFit] SKIPPED: rect is zero/negative',
-      JSON.stringify({ w: rect.width, h: rect.height }),
-      'visible:', props.visible, 'innerHeight:', window.innerHeight);
-    return;
-  }
+  if (rect.width <= 0 || rect.height <= 0) return;
 
-  // [debug-loop] Log fit dimensions
-  console.log('[TerminalTab][safeFit] fitting:',
-    JSON.stringify({ w: rect.width, h: rect.height }),
-    'xterm before:', terminal.cols, 'x', terminal.rows,
-    'innerHeight:', window.innerHeight);
   shouldSendResize = true;
-  const prevCols = terminal.cols;
-  const prevRows = terminal.rows;
   fitAddon.fit();
-  safeFitStats.fitted++;
-  safeFitStats.lastCols = terminal.cols;
-  safeFitStats.lastRows = terminal.rows;
-  (window as any).__safeFitStats = { ...safeFitStats, reason: 'ok' };
-  blackbox.log('fit', 'safeFit:done', {
-    tabId: props.tab.id?.slice(-6),
-    rectW: Math.round(rect.width), rectH: Math.round(rect.height),
-    beforeCols: prevCols, beforeRows: prevRows,
-    afterCols: terminal.cols, afterRows: terminal.rows,
-    changed: prevCols !== terminal.cols || prevRows !== terminal.rows,
-  });
-  console.log('[TerminalTab][safeFit] after fit: xterm', terminal.cols, 'x', terminal.rows);
 }
 
 function initTerminal() {
@@ -599,179 +518,21 @@ function initTerminal() {
   serializeAddon = new SerializeAddon();
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(serializeAddon);
+  terminal.open(terminalRef.value);
 
-  // [debug-loop] fix v3: Open terminal hidden, reveal after keyboard settles.
-  //
-  // Root cause (from blackbox data):
-  // - v2 waited for viewport stability BEFORE terminal.open(), but the keyboard
-  //   opens ~600ms after mount (triggered by tryFocus). The 300ms wait was not
-  //   long enough — it detected "stable" innerHeight before the keyboard opened,
-  //   then terminal.open() was still called at the wrong (large) size.
-  //
-  // New approach:
-  // 1. Open terminal IMMEDIATELY (hidden with opacity:0)
-  // 2. Watch innerHeight for keyboard-open detection (drop of >50px)
-  // 3. After keyboard detected + settled (3 stable readings), reveal terminal
-  // 4. If no keyboard after 2s, reveal anyway (desktop/no-keyboard case)
-  //
-  // This guarantees xterm canvas is created at the FINAL correct size,
-  // avoiding the Android Chrome canvas re-render bug entirely.
-  blackbox.log('terminal', 'waitingForContainer', {
-    tabId: props.tab.id?.slice(-6),
-    innerH: window.innerHeight,
-    vvHeight: window.visualViewport?.height,
-  });
-  const waitForContainerAndOpen = (attempt: number = 0) => {
-    if (!terminalRef.value) {
-      if (attempt < 30) {
-        setTimeout(() => waitForContainerAndOpen(attempt + 1), 50);
-      } else {
-        blackbox.log('terminal', 'openTimeout', { tabId: props.tab.id?.slice(-6), attempt });
-        terminal!.open(terminalRef.value!);
-        onTerminalOpened();
-      }
-      return;
-    }
-    const rect = terminalRef.value.getBoundingClientRect();
-    if (rect.height <= 0 && attempt < 30) {
-      setTimeout(() => waitForContainerAndOpen(attempt + 1), 50);
-      return;
-    }
-
-    blackbox.log('terminal', 'containerReady', {
-      tabId: props.tab.id?.slice(-6),
-      attempt, rectW: Math.round(rect.width), rectH: Math.round(rect.height),
-    });
-
-    // Hide terminal wrapper BEFORE opening — prevents flash of incorrectly-sized content
-    const wrapper = terminalRef.value?.closest('.terminal-wrapper') as HTMLElement | null;
-    if (wrapper) {
-      wrapper.style.opacity = '0';
-    }
-
-    // Open terminal immediately (hidden). The canvas initializes at current container size.
-    terminal!.open(terminalRef.value!);
-    onTerminalOpened();
-
-    // Now watch for keyboard: innerHeight will drop when keyboard opens.
-    // After it settles, we know the final viewport size and can reveal correctly.
-    const initialH = window.innerHeight;
-    let keyboardDetected = false;
-    let stableCount = 0;
-    let lastH = initialH;
-    let checkAttempts = 0;
-    let revealed = false;
-
-    const revealTerminal = (reason: string) => {
-      if (revealed) return;
-      revealed = true;
-      if (wrapper) {
-        wrapper.style.opacity = '';
-      }
-      blackbox.log('terminal', 'revealed', {
-        tabId: props.tab.id?.slice(-6),
-        innerH: window.innerHeight,
-        vvHeight: window.visualViewport?.height,
-        keyboardDetected,
-        reason,
-        checkAttempts,
-      });
-      // Final fit at revealed dimensions (keyboard has settled)
-      safeFit();
-      try { (terminal! as any).refresh(0, terminal!.rows - 1); } catch { }
-
-      // Delayed second refresh to ensure canvas is fully rendered.
-      // On Android Chrome with heavy pages (md-editor-v3 etc.), xterm's canvas
-      // renderer may need extra time after terminal.open() to initialize.
-      // The immediate refresh() above may fire before the renderer is ready.
-      // A delayed refresh after a few animation frames catches the renderer when ready.
-      setTimeout(() => {
-        try { (terminal! as any).refresh(0, terminal!.rows - 1); } catch { }
-      }, 200);
-
-      // NOW connect WebSocket and focus — terminal is at correct final size
-      connectWebSocket();
-      setTimeout(() => {
-        console.log('[TerminalTab][focus] attempting focus after reveal');
-        tryFocus();
-      }, 100);
-    };
-
-    const checkKeyboard = () => {
-      if (revealed) return;
-      checkAttempts++;
-      const currentH = window.innerHeight;
-
-      if (Math.abs(currentH - initialH) > 50) {
-        keyboardDetected = true;
-      }
-
-      if (keyboardDetected) {
-        // Keyboard opened — wait for it to settle (animation complete)
-        if (Math.abs(currentH - lastH) <= 2) {
-          stableCount++;
-        } else {
-          stableCount = 0;
-          lastH = currentH;
-        }
-        if (stableCount >= 5) {
-          revealTerminal('keyboard-settled');
-          return;
-        }
-      }
-
-      // Timeout: if no keyboard after 1500ms, reveal anyway
-      // (Android keyboard takes ~300-500ms to open; desktop has no keyboard.
-      //  Increased from 500ms to 1500ms to account for heavier page loads
-      //  from new file management views with md-editor-v3.)
-      if (checkAttempts >= 15) {
-        revealTerminal('timeout');
-        return;
-      }
-
-      setTimeout(checkKeyboard, 100);
-    };
-
-    setTimeout(checkKeyboard, 100);
-  };
-
-  function onTerminalOpened() {
-    blackbox.log('terminal', 'opened', {
-      tabId: props.tab.id?.slice(-6),
-      cols: terminal!.cols, rows: terminal!.rows,
-      innerH: window.innerHeight,
-      vvHeight: window.visualViewport?.height,
-      containerRect: terminalRef.value ? JSON.stringify({
-        w: Math.round(terminalRef.value.getBoundingClientRect().width),
-        h: Math.round(terminalRef.value.getBoundingClientRect().height),
-      }) : 'null',
-    });
-
-    // Initial fit (will be re-done after reveal when keyboard has settled)
-    safeFit();
-
-    // Attach terminal instance to DOM for external access
-    if (terminalRef.value) {
-      (terminalRef.value as any).__xterm = terminal;
-    }
-
-    // Restore scrollback from sessionStorage (at correct dimensions after reveal)
-    const savedScrollback = sessionStorage.getItem(`scrollback:${props.tab.id}`);
-    if (savedScrollback && terminal) {
-      terminal.write(savedScrollback);
-    }
-
-    // NOTE: connectWebSocket() and tryFocus() are deferred to revealTerminal()
-    // which fires after keyboard has settled. This ensures session:resume
-    // is sent with the correct terminal dimensions.
+  // Attach terminal instance to DOM for external access (e.g., testing, devtools)
+  if (terminalRef.value) {
+    (terminalRef.value as any).__xterm = terminal;
   }
-
-  waitForContainerAndOpen();
 
   // Helper: check if charBefore is a valid path separator
   // Special handling for colon: if the matched part starts with [A-Za-z]: (Windows drive),
   // then the preceding colon is a separator and we should keep the drive letter.
   function isPathSeparator(charBefore: string, matchedPart: string): boolean {
+    // Check for backslash and forward slash (common path separators)
+    if (charBefore === '\\' || charBefore === '/') {
+      return true;
+    }
     if (charBefore === ' ' || charBefore === '"' || charBefore === "'" || charBefore === '`') {
       return true;
     }
@@ -876,10 +637,11 @@ function initTerminal() {
                 break;
               }
 
-              const prevText = prevLine.translateToString(true); // Trim right whitespace to handle echo commands
+              const prevText = getLineTextForLookback(prevLine); // [debug-loop] fix: preserve fullwidth at wrap boundary
 
-              // Find path chars at end of line
-              const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+              // Find path chars at end of line (includes Chinese 一-鿿)
+              // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+              const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/一-鿿]+)["']?$/);
 
               if (pathEndMatch) {
                 const endPart = pathEndMatch[1];
@@ -975,10 +737,11 @@ function initTerminal() {
             const prevLineNum = bufferLineNumber - 2;  // prev line in 0-based: bufferLineNumber is 1-based, prev = -2
             const prevLine = buffer.getLine(prevLineNum);
             if (prevLine) {
-              const prevText = prevLine.translateToString(true);
+              const prevText = getLineTextForLookback(prevLine);
               // Check if previous line ends with path chars that could form .md with this suffix
               // Include colon for Windows drive letters (D:), trim leading whitespace
-              const prevEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/\u4e00-\u9fff ]+)$/);
+              // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+              const prevEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/\u4e00-\u9fff ]+)["']?$/);
               if (prevEndMatch) {
                 const prevPart = prevEndMatch[1].trimStart();
                 const combined = (prevPart + suffixPart).trim();
@@ -995,8 +758,8 @@ function initTerminal() {
                     while (lookbackLine >= 0) {
                       const lbLine = buffer.getLine(lookbackLine);
                       if (!lbLine) break;
-                      const lbText = lbLine.translateToString(true);
-                      const lbMatch = lbText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+                      const lbText = getLineTextForLookback(lbLine);
+                      const lbMatch = lbText.match(/([-a-zA-Z0-9_:.\\\/一-]+)["']?$/);
                       if (lbMatch) {
                         const lbPart = lbMatch[1];
                         const lbIndex = lbMatch.index ?? 0;
@@ -1046,7 +809,8 @@ function initTerminal() {
         }
 
         // Also check for path continuations (line ending with path chars that continue to .md on next line)
-        const pathEndRegex = /[-a-zA-Z0-9_:.\\\/]+$/;
+        // Includes Chinese characters (一-鿿) for wrapped paths with Chinese filenames
+        const pathEndRegex = /[-a-zA-Z0-9_:.\\\/一-鿿]+$/;
         const pathEndMatch = lineText.match(pathEndRegex);
 
         if (pathEndMatch && foundLinks.length === 0) {
@@ -1064,9 +828,9 @@ function initTerminal() {
 
             // Check if next line starts with path chars and has .md (or continuation like 'd', 'md')
             // Handles cases where '.md' is split: 'file.m' on one line, 'd' on next
-            // Allow leading whitespace
-            const mdMatch = nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/]*\.md|md|d)(?:\s|$|[,.:;!?)}\]])/)
-              || nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/]*\.md|md|d)$/);
+            // Allow leading whitespace. Includes Chinese characters (一-鿿) for wrapped paths.
+            const mdMatch = nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/一-鿿]*\.md|md|d)(?:\s|$|[,.:;!?)}\]])/)
+              || nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/一-鿿]*\.md|md|d)$/);
             if (mdMatch && (mdMatch[0].endsWith('.md') || mdMatch[0].trim() === 'd' || mdMatch[0].trim() === 'md' || /\.m?$/.test(matchedEnd))) {
               const pathSuffix = mdMatch[0].trim();
 
@@ -1084,9 +848,11 @@ function initTerminal() {
                   const prevLine = buffer.getLine(lookbackLine);
                   if (!prevLine) break;
 
-                  const prevText = prevLine.translateToString(false);
+                  const prevText = getLineTextForLookback(prevLine);
 
-                  const prevMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+                  // Look back for path chars (includes Chinese 一-鿿)
+                  // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+                  const prevMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/一-]+)["']?$/);
 
                   if (prevMatch) {
                     const endPart = prevMatch[1];
@@ -1144,8 +910,8 @@ function initTerminal() {
               break;
             }
 
-            // Check if next line has path chars but no .md yet - continue looking
-            const pathContMatch = nextText.match(/^\s*[-a-zA-Z0-9_:.\\\/]+/);
+            // Check if next line has path chars but no .md yet - continue looking (includes Chinese)
+            const pathContMatch = nextText.match(/^\s*[-a-zA-Z0-9_:.\\\/一-鿿]+/);
             if (pathContMatch) {
               lookAheadLine++;
             } else {
@@ -1213,17 +979,19 @@ function initTerminal() {
           });
         }
 
-        // HTML file detection
-        const htmlRegex = /[-a-zA-Z0-9_:.\\\/]+\.html?/g;
+        // HTML file detection (includes Chinese characters 一-鿿)
+        const htmlRegex = /[-a-zA-Z0-9_:.\\\/一-鿿]+\.html?/g;
         let htmlMatch;
 
         while ((htmlMatch = htmlRegex.exec(lineText)) !== null) {
           const matchedPath = htmlMatch[0];
           const matchStart = htmlMatch.index;
           const matchEnd = matchStart + matchedPath.length;
+          console.log('[HTML LinkProvider] Matched:', JSON.stringify(matchedPath), 'on line', bufferLineNumber, 'lineText:', JSON.stringify(lineText.substring(0, 50)));
 
           // Try to build complete path by looking at previous lines (same logic as .md files)
           let completePath = matchedPath;
+          let foundCompletePath = false; // [debug-loop] fix: avoid duplicate path when endPart is complete
           const isAbsolutePath = /^[A-Za-z]:/.test(matchedPath) || /^[.\/]/.test(matchedPath);
 
           if (!isAbsolutePath) {
@@ -1234,32 +1002,58 @@ function initTerminal() {
               const prevLine = buffer.getLine(lookbackLine);
               if (!prevLine) break;
 
-              const prevText = prevLine.translateToString(true);
-              const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+              const prevText = getLineTextForLookback(prevLine);
+              console.log('[HTML cross-line] lookbackLine:', lookbackLine, 'prevText:', JSON.stringify(prevText), 'prevText.length:', prevText.length, 'isWrapped:', prevLine.isWrapped);
+              // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+              const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/一-鿿]+)["']?$/);
+              console.log('[HTML cross-line] pathEndMatch:', pathEndMatch ? JSON.stringify(pathEndMatch[1]) : null, 'index:', pathEndMatch?.index);
 
               if (pathEndMatch) {
                 const endPart = pathEndMatch[1];
                 const endIndex = pathEndMatch.index ?? 0;
+                console.log('[HTML cross-line] endPart:', JSON.stringify(endPart), 'endIndex:', endIndex, 'pathPrefix (before):', JSON.stringify(pathPrefix));
 
                 if (endIndex > 0) {
                   const charBefore = prevText[endIndex - 1];
+                  console.log('[HTML cross-line] charBefore:', JSON.stringify(charBefore), 'charBefore.codePointAt:', charBefore.codePointAt(0));
                   if (isPathSeparator(charBefore, endPart)) {
-                    pathPrefix = endPart + pathPrefix;
-                    completePath = pathPrefix + matchedPath;
+                    console.log('[HTML cross-line] isPathSeparator=true, breaking');
+                    // If separator is a quote, clear previous pathPrefix (it's a new complete path)
+                    if (charBefore === '"' || charBefore === "'") {
+                      pathPrefix = endPart;
+                    } else {
+                      pathPrefix = endPart + pathPrefix;
+                    }
+                    // If endPart is already a complete path (ends with .html/.md/etc), don't append matchedPath
+                    if (/\.(html?|md|txt|log|json|js|ts|css|scss|less|py|java|cpp|c|h|go|rs|php|rb|sh|bat|ps1|yaml|yml|xml|svg|png|jpg|jpeg|gif|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|tar|gz|rar|7z)$/i.test(endPart)) {
+                      completePath = endPart;
+                      foundCompletePath = true; // [debug-loop] fix: mark as found to avoid duplicate
+                      console.log('[HTML cross-line] endPart is complete path, using:', completePath);
+                    } else {
+                      completePath = pathPrefix + matchedPath;
+                    }
                     break;
+                  } else {
+                    console.log('[HTML cross-line] isPathSeparator=false, continuing lookback');
                   }
+                } else {
+                  console.log('[HTML cross-line] endIndex=0, no charBefore to check');
                 }
 
                 pathPrefix = endPart + pathPrefix;
+                console.log('[HTML cross-line] pathPrefix (after):', JSON.stringify(pathPrefix));
                 lookbackLine--;
               } else {
+                console.log('[HTML cross-line] pathEndMatch=null, breaking');
                 break;
               }
             }
 
-            if (pathPrefix && completePath === matchedPath) {
+            // [debug-loop] fix: only append if not already found complete path in loop
+            if (!foundCompletePath && pathPrefix && completePath === matchedPath) {
               completePath = pathPrefix + matchedPath;
             }
+            console.log('[HTML cross-line] FINAL: matchedPath:', JSON.stringify(matchedPath), 'pathPrefix:', JSON.stringify(pathPrefix), 'completePath:', JSON.stringify(completePath));
           }
 
           const htmlCellStart = strToCell[matchStart] ?? matchStart;
@@ -1342,8 +1136,8 @@ function initTerminal() {
     // Build string-index → cell-position mapping (handles fullwidth chars like Chinese)
     const strToCell = buildStringToCellMap(line, lineText);
 
-    // Check if click is on a .md file (Windows absolute, relative, Unix-style)
-    const mdRegex = /[-a-zA-Z0-9_:.\\\/]+\.md/g;
+    // Check if click is on a .md file (Windows absolute, relative, Unix-style, includes Chinese)
+    const mdRegex = /[-a-zA-Z0-9_:.\\\/一-鿿]+\.md/g;
     let match;
     while ((match = mdRegex.exec(lineText)) !== null) {
       const matchedPath = match[0];
@@ -1371,10 +1165,11 @@ function initTerminal() {
             const prevLine = buffer.getLine(lookbackLine);
             if (!prevLine) break;
 
-            const prevText = prevLine.translateToString(false);
+            const prevText = getLineTextForLookback(prevLine);
 
-            // Find path chars at end of line
-            const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+            // Find path chars at end of line (includes Chinese)
+            // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+            const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/一-]+)["']?$/);
 
             if (pathEndMatch) {
               const endPart = pathEndMatch[1];
@@ -1474,7 +1269,7 @@ function initTerminal() {
     console.log('[DirectClick] fileUrlRegex loop finished, no click inside match');
 
     // Check if click is on an HTML file path (without file:// prefix, and not already part of file://)
-    const htmlFileRegex = /(?<!file:\/\/)[-a-zA-Z0-9_:.\\\/]+\.html?/g;
+    const htmlFileRegex = /(?<!file:\/\/)[-a-zA-Z0-9_:.\\\/一-鿿]+\.html?/g;
     let htmlFileMatch;
     while ((htmlFileMatch = htmlFileRegex.exec(lineText)) !== null) {
       const matchedPath = htmlFileMatch[0];
@@ -1487,7 +1282,7 @@ function initTerminal() {
         // Check if this might be a continuation of a file:// URL from the previous line
         const prevLine = buffer.getLine(bufferLine - 1);
         if (prevLine) {
-          const prevText = prevLine.translateToString(true);
+          const prevText = getLineTextForLookback(prevLine);
           const prevFileUrlMatch = prevText.match(/(file:\/\/[A-Za-z]:[^\s"'<>]*)$/);
           if (prevFileUrlMatch) {
             // Previous line has a file:// URL that was cut off
@@ -1510,8 +1305,8 @@ function initTerminal() {
     console.log('[DirectClick] htmlFileRegex loop finished, no click inside match');
 
     // No .md match found on current line - check if clicked on a path that continues to next line
-    // Match path-like content (ending with \ or / or just path chars at end of line)
-    const pathEndRegex = /[-a-zA-Z0-9_:.\\\/]+$/;
+    // Match path-like content (ending with \ or / or just path chars at end of line, includes Chinese)
+    const pathEndRegex = /[-a-zA-Z0-9_:.\\\/一-鿿]+$/;
     const pathEndMatch = lineText.match(pathEndRegex);
 
     // Also check if this line starts with .md or md (reverse cross-line continuation)
@@ -1527,8 +1322,9 @@ function initTerminal() {
         const prevLineNum = bufferLine - 1;
         const prevLine = buffer.getLine(prevLineNum);
         if (prevLine) {
-          const prevText = prevLine.translateToString(true);
-          const prevEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/\u4e00-\u9fff ]+)$/);
+          const prevText = getLineTextForLookback(prevLine);
+          // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+          const prevEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/\u4e00-\u9fff ]+)["']?$/);
           if (prevEndMatch) {
             const prevPart = prevEndMatch[1].trimStart();
             const combined = (prevPart + suffixPart).trim();
@@ -1544,8 +1340,8 @@ function initTerminal() {
                 while (lookbackLine >= 0) {
                   const lbLine = buffer.getLine(lookbackLine);
                   if (!lbLine) break;
-                  const lbText = lbLine.translateToString(true);
-                  const lbMatch = lbText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+                  const lbText = getLineTextForLookback(lbLine);
+                  const lbMatch = lbText.match(/([-a-zA-Z0-9_:.\\\/一-]+)["']?$/);
                   if (lbMatch) {
                     const lbPart = lbMatch[1];
                     const lbIndex = lbMatch.index ?? 0;
@@ -1596,10 +1392,10 @@ function initTerminal() {
 
           const nextText = nextLine.translateToString(true);
 
-          // Check if next line starts with path chars and has .md
+          // Check if next line starts with path chars and has .md (includes Chinese)
           // Also match continuation patterns: just "md", "d", ".md" with optional leading whitespace
-          const mdMatch = nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/]*\.md|md|d)(?:\s|$|[,.:;!?)}\]])/)
-            || nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/]*\.md|md|d)$/);
+          const mdMatch = nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/一-鿿]*\.md|md|d)(?:\s|$|[,.:;!?)}\]])/)
+            || nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/一-鿿]*\.md|md|d)$/);
           if (mdMatch) {
             pathSuffix = mdMatch[0].trim();
 
@@ -1616,9 +1412,9 @@ function initTerminal() {
                 const prevLine = buffer.getLine(lookbackLine);
                 if (!prevLine) break;
 
-                const prevText = prevLine.translateToString(false);
+                const prevText = getLineTextForLookback(prevLine);
 
-                const prevMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+                const prevMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/一-]+)["']?$/);
 
                 if (prevMatch) {
                   const endPart = prevMatch[1];
@@ -1654,8 +1450,8 @@ function initTerminal() {
             return;
           }
 
-          // Check if next line has path chars but no .md yet
-          const pathContMatch = nextText.match(/^[-a-zA-Z0-9_:.\\\/]+/);
+          // Check if next line has path chars but no .md yet (includes Chinese)
+          const pathContMatch = nextText.match(/^[-a-zA-Z0-9_:.\\\/一-鿿]+/);
           if (pathContMatch) {
             pathSuffix = pathContMatch[0];
             lookAheadLine++;
@@ -1672,17 +1468,21 @@ function initTerminal() {
 
   // Delay initial fit to ensure DOM is rendered
   setTimeout(() => {
-    // [debug-loop] Log terminal dimensions at initialization
-    const rect = terminalRef.value?.getBoundingClientRect();
-    console.log('[TerminalTab][init] container rect:', JSON.stringify({ w: rect?.width, h: rect?.height }),
-      'xterm:', terminal?.cols, 'x', terminal?.rows,
-      'innerHeight:', window.innerHeight,
-      'visualViewport:', JSON.stringify({ h: window.visualViewport?.height, offsetTop: window.visualViewport?.offsetTop }));
     safeFit();
-    // NOTE: connectWebSocket() and scrollback restoration are deferred to
-    // onTerminalOpened() which fires after viewport has stabilized
-    // (keyboard animation complete). See waitForContainerAndOpen().
+    // Start WebSocket connection after terminal is ready
+    connectWebSocket();
   }, 50);
+
+  // Auto-focus terminal after initialization
+  setTimeout(() => {
+    tryFocus();
+  }, 200);
+
+  // Restore scrollback from sessionStorage if exists
+  const savedScrollback = sessionStorage.getItem(`scrollback:${props.tab.id}`);
+  if (savedScrollback && terminal) {
+    terminal.write(savedScrollback);
+  }
 
   // Start periodic scrollback save
   saveScrollbackTimer = window.setInterval(() => {
@@ -1756,23 +1556,28 @@ function initTerminal() {
   // Register fit function for this tab (called on viewport resize)
   terminalStore.registerTabFitter(props.tab.id, () => {
     if (terminal) {
-      const prevCols = terminal.cols;
-      const prevRows = terminal.rows;
       safeFit();
-      // [debug-loop] fix: After safeFit, xterm might not re-render if dimensions
-      // didn't change. Force refresh.
-      if (terminal.cols === prevCols && terminal.rows === prevRows) {
-        try {
-          (terminal as any).refresh(0, terminal.rows - 1);
-          blackbox.log('fit', 'fitter:refresh', {
-            tabId: props.tab.id?.slice(-6),
-            cols: terminal.cols, rows: terminal.rows,
-          });
-        } catch { /* refresh might not be available */ }
-      }
+      // Call forceScrollToBottom to reset userScrolledUp flag and scroll to bottom
       forceScrollToBottom();
     }
   });
+
+  // Pre-connect fileWebSocket for file browsing (md/html preview)
+  // This ensures the connection is ready when user clicks on file links
+  if (!fileWebSocket.isConnected()) {
+    const apiUrl = settingsStore.settings.apiUrl || '';
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = apiUrl
+      ? apiUrl.replace(/^http/, 'ws') + '/ws/browser'
+      : `${wsProtocol}//${window.location.host}/ws/browser`;
+
+    console.log('[TerminalTab] Pre-connecting fileWebSocket for file browsing');
+    fileWebSocket.connect(wsUrl, props.tab.agentId).then(() => {
+      console.log('[TerminalTab] fileWebSocket pre-connected successfully');
+    }).catch(err => {
+      console.error('[TerminalTab] Failed to pre-connect fileWebSocket:', err);
+    });
+  }
 }
 
 // Send input to the terminal
@@ -1811,15 +1616,10 @@ function connectWebSocket() {
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
-    blackbox.log('ws', 'open', {
-      tabId: props.tab.id?.slice(-6),
-      agentId: props.tab.agentId,
-      sessionId: props.tab.sessionId?.slice(-6) || null,
-    });
     console.log('[TerminalTab] WebSocket opened, calling initVoiceWebSocket');
     ws?.send(JSON.stringify({
       type: 'auth',
-      payload: { userId: authStore.userId, agentId: props.tab.agentId, sessionId: props.tab.sessionId || null },
+      payload: { userId: authStore.userId, agentId: props.tab.agentId },
       timestamp: Date.now(),
     }));
     // Initialize voice WebSocket with terminal WebSocket
@@ -1834,11 +1634,6 @@ function connectWebSocket() {
   };
 
   ws.onclose = () => {
-    blackbox.log('ws', 'close', {
-      tabId: props.tab.id?.slice(-6),
-      sessionId: props.tab.sessionId?.slice(-6) || 'none',
-    });
-    console.log('[TerminalTab] WebSocket closed, tab:', props.tab.id, 'sessionId:', props.tab.sessionId || 'none');
     status.value = 'disconnected';
   };
 
@@ -1850,22 +1645,12 @@ function connectWebSocket() {
 function handleWsMessage(msg: any) {
   switch (msg.type) {
     case 'auth:result':
-      blackbox.log('ws', 'auth:result', {
-        tabId: props.tab.id?.slice(-6),
-        success: msg.payload.success,
-        hasSessionId: !!props.tab.sessionId,
-        error: msg.payload.error,
-      });
-      console.log('[TerminalTab] auth:result received:', msg.payload, '| sessionId:', props.tab.sessionId ? 'present' : 'none');
+      console.log('[TerminalTab] auth:result received:', msg.payload);
       if (msg.payload.success) {
+        // Check if we have a sessionId to resume
         if (props.tab.sessionId) {
           const resumeCols = terminal?.cols || 80;
           const resumeRows = terminal?.rows || 24;
-          blackbox.log('ws', 'session:resume', {
-            tabId: props.tab.id?.slice(-6),
-            sessionId: props.tab.sessionId?.slice(-6),
-            cols: resumeCols, rows: resumeRows,
-          });
           // Try to resume existing session
           ws?.send(JSON.stringify({
             type: 'session:resume',
@@ -1889,13 +1674,6 @@ function handleWsMessage(msg: any) {
       }
       break;
     case 'session:created':
-    case 'session:created':
-      blackbox.log('ws', 'session:created', {
-        tabId: props.tab.id?.slice(-6),
-        success: msg.payload.success,
-        sessionId: msg.payload.sessionId?.slice(-6),
-        error: msg.payload.error,
-      });
       console.log('[TerminalTab] session:created received:', msg.payload);
       if (msg.payload.success) {
         sessionId = msg.payload.sessionId;
@@ -1920,43 +1698,17 @@ function handleWsMessage(msg: any) {
       if (msg.payload.success) {
         sessionId = props.tab.sessionId || null;
         status.value = 'connected';
-        blackbox.log('ws', 'session:resumed', {
-          tabId: props.tab.id?.slice(-6),
-          sessionId: sessionId?.slice(-6),
-          cols: terminal?.cols, rows: terminal?.rows,
-          innerH: window.innerHeight,
-          vvHeight: window.visualViewport?.height,
-        });
-        // [debug-loop] Log session:resumed with terminal dimensions
-        const rect = terminalRef.value?.getBoundingClientRect();
-        console.log('[TerminalTab][session:resumed] terminal:', terminal?.cols, 'x', terminal?.rows,
-          'container:', JSON.stringify({ w: rect?.width, h: rect?.height }),
-          'innerHeight:', window.innerHeight,
-          'visualViewport.h:', window.visualViewport?.height);
         // [debug-loop] fix v3: After session resume, send wide-char recovery
         // Wait for agent's bump resize to complete (~550ms), then send recovery
         sendWideCharRecovery(600);
 
         // Also do safeFit to ensure terminal dimensions are correct
-        // [debug-loop] fix v4: Two delayed fits — one after bump resize, one later
-        // to handle Android keyboard animation that may still be in progress.
         setTimeout(() => {
           if (terminal && fitAddon) {
-            console.log('[TerminalTab][session:resumed] fit@1000ms, innerHeight:', window.innerHeight);
             safeFit();
           }
         }, 1000);
-        setTimeout(() => {
-          if (terminal && fitAddon) {
-            console.log('[TerminalTab][session:resumed] fit@2000ms, innerHeight:', window.innerHeight);
-            safeFit();
-          }
-        }, 2000);
       } else {
-        blackbox.log('ws', 'session:resumed:FAILED', {
-          tabId: props.tab.id?.slice(-6),
-          error: msg.payload.error,
-        });
         // Resume failed - session no longer exists on server
         // Remove from history to prevent zombie sessions
         if (props.tab.sessionId) {
@@ -1987,16 +1739,6 @@ function handleWsMessage(msg: any) {
       break;
     case 'session:output':
       if (terminal) {
-        sessionOutputCount++;
-        // Log first few and every 50th message to track data flow
-        if (sessionOutputCount <= 3 || sessionOutputCount % 50 === 0) {
-          blackbox.log('ws', 'session:output', {
-            tabId: props.tab.id?.slice(-6),
-            count: sessionOutputCount,
-            dataLen: msg.payload.data?.length || 0,
-            dataPreview: msg.payload.data?.slice(0, 40)?.replace(/[\r\n]/g, '\\n'),
-          });
-        }
         terminal.write(msg.payload.data, () => {
           // Callback after write is processed
         });

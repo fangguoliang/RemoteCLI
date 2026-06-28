@@ -52,6 +52,7 @@ import { MdEditor, MdPreview } from 'md-editor-v3';
 import 'md-editor-v3/lib/style.css';
 import { useFileStore } from '@/stores/file';
 import { fileWebSocket } from '@/services/fileWebSocket';
+import { blackbox } from '@/utils/eventLogger';
 
 const router = useRouter();
 const store = useFileStore();
@@ -59,6 +60,7 @@ const store = useFileStore();
 // Close markdown viewer when navigating away from terminal
 router.afterEach(() => {
   if (store.viewerVisible) {
+    fileWebSocket.cancelViewing();
     store.clearViewer();
   }
 });
@@ -74,6 +76,32 @@ const isEditMode = ref(false);
 const showToast = ref(false);
 const toastMessage = ref('');
 const isErrorToast = ref(false);
+
+// [swipe-nav-fix] Push a history state when viewer opens to trap browser swipe-back gesture.
+let viewerHistoryPushed = false;
+
+function onPopStateCloseViewer() {
+  if (viewerHistoryPushed && store.viewerVisible) {
+    viewerHistoryPushed = false;
+    handleClose();
+    // Signal to FileView's popstate handler that we handled this swipe-back
+    (window as any).__swipeBackHandled = true;
+    setTimeout(() => { (window as any).__swipeBackHandled = false; }, 100);
+  }
+}
+
+window.addEventListener('popstate', onPopStateCloseViewer);
+
+watch(visible, (v) => {
+  if (v && !viewerHistoryPushed) {
+    history.pushState({ markdownViewer: true }, '');
+    viewerHistoryPushed = true;
+  }
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('popstate', onPopStateCloseViewer);
+});
 let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const fileName = computed(() => {
@@ -95,28 +123,59 @@ const contentRef = ref<HTMLElement | null>(null);
 // Non-passive touchmove to prevent browser horizontal swipe navigation
 function onTouchStartCapture(e: TouchEvent) {
   touchStartTarget = e.target as HTMLElement;
+  blackbox.log('mdview-touch', 'mdviewer:touchstart', {
+    x: e.touches[0].clientX,
+    y: e.touches[0].clientY,
+    targetClass: touchStartTarget?.className?.slice(0, 50) || 'unknown',
+    isToolbar: !!touchStartTarget?.closest('.md-editor-toolbar, .md-b-toolbar, .md-editor-toolbar-wrapper'),
+    isScrollable: !!touchStartTarget?.closest('.md-editor, .md-editor-preview-wrap'),
+  });
 }
 
 function onTouchMove(e: TouchEvent) {
-  // Don't interfere with toolbar scrolling
-  if (touchStartTarget?.closest('.md-editor-toolbar, .md-b-toolbar, .md-editor-toolbar-wrapper')) return;
-  // Don't interfere with scrollable content
-  if (touchStartTarget?.closest('.md-editor, .md-editor-preview-wrap')) return;
   const dx = Math.abs(e.touches[0].clientX - touchStartX);
   const dy = Math.abs(e.touches[0].clientY - touchStartY);
-  if (dx > dy && dx > 10) {
-    e.preventDefault();
+  const isHorizontal = dx > dy;
+
+  // For toolbar: still prevent horizontal swipe that would trigger browser navigation
+  if (touchStartTarget?.closest('.md-editor-toolbar, .md-b-toolbar, .md-editor-toolbar-wrapper')) {
+    if (isHorizontal && dx > 10) {
+      e.preventDefault();
+      blackbox.log('mdview-touch', 'mdviewer:touchmove-blocked-toolbar', { dx, dy, prevented: true });
+    }
+    return;
   }
+  // For scrollable content: still prevent horizontal swipe
+  if (touchStartTarget?.closest('.md-editor, .md-editor-preview-wrap')) {
+    if (isHorizontal && dx > 10) {
+      e.preventDefault();
+      blackbox.log('mdview-touch', 'mdviewer:touchmove-blocked-content', { dx, dy, prevented: true });
+    }
+    return;
+  }
+  if (isHorizontal && dx > 10) {
+    e.preventDefault();
+    blackbox.log('mdview-touch', 'mdviewer:touchmove-blocked-other', { dx, dy, prevented: true });
+  }
+}
+
+function onTouchEndCapture(e: TouchEvent) {
+  blackbox.log('mdview-touch', 'mdviewer:touchend', {
+    targetClass: touchStartTarget?.className?.slice(0, 50) || 'unknown',
+    changedTouches: e.changedTouches.length,
+  });
 }
 
 onMounted(() => {
   contentRef.value?.addEventListener('touchstart', onTouchStartCapture, { passive: true, capture: true });
   contentRef.value?.addEventListener('touchmove', onTouchMove, { passive: false });
+  contentRef.value?.addEventListener('touchend', onTouchEndCapture, { passive: true, capture: true });
 });
 
 onBeforeUnmount(() => {
   contentRef.value?.removeEventListener('touchstart', onTouchStartCapture, { capture: true });
   contentRef.value?.removeEventListener('touchmove', onTouchMove);
+  contentRef.value?.removeEventListener('touchend', onTouchEndCapture, { capture: true });
 });
 
 function handleTouchStart(e: TouchEvent) {
@@ -152,6 +211,7 @@ function handleClose() {
     clearTimeout(toastTimeout);
     toastTimeout = null;
   }
+  fileWebSocket.cancelViewing();
   store.clearViewer();
   isEditMode.value = false;
 }
@@ -258,14 +318,16 @@ onUnmounted(() => {
   background: var(--bg-root);
   display: flex;
   flex-direction: column;
-  touch-action: none; /* block ALL browser touch gestures including swipe navigation */
+  /* touch-action removed - was 'none' which blocked vertical scrolling via CSS inheritance.
+     Horizontal swipe prevention is handled by JS touchmove preventDefault handler. */
 }
 
-/* Allow vertical scrolling on content elements */
+/* Do NOT set touch-action on content elements - let MdEditor's internal touch-action: none
+   block swipe-back at root level, while the browser detects overflow:auto child for vertical scroll. */
 .markdown-viewer-overlay .md-editor,
 .markdown-viewer-overlay .md-editor-preview-wrap,
 .markdown-viewer-overlay .md-editor .md-editor-preview {
-  touch-action: pan-y;
+  overscroll-behavior: none;
 }
 
 .viewer-header {
@@ -291,6 +353,7 @@ onUnmounted(() => {
 .back-btn {
   background: transparent;
   color: var(--text-primary);
+  touch-action: manipulation; /* Ensure click fires even when parent has touch-action: none */
 }
 
 .back-btn:hover {
@@ -402,6 +465,7 @@ onUnmounted(() => {
   flex-wrap: nowrap !important;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  touch-action: pan-x; /* allow horizontal scroll, block browser swipe navigation */
 }
 .markdown-viewer-overlay .md-editor-toolbar::-webkit-scrollbar,
 .markdown-viewer-overlay .md-b-toolbar::-webkit-scrollbar {

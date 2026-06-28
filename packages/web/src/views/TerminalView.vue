@@ -188,7 +188,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useTerminalStore } from '../stores/terminal';
@@ -466,12 +466,24 @@ let cleanupViewportHandling: (() => void) | null = null;
 onMounted(() => {
   // Reset fit counter for this mount cycle
   fitCallCount = 0;
+
+  // [debug-blackbox] Capture navigation source and initial keyboard state
+  const navEntry = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+  const navType = navEntry?.type || 'unknown';
+  const keyboardAlreadyOpen = window.visualViewport
+    ? (window.innerHeight - window.visualViewport.height) > 100
+    : false;
+
   blackbox.log('navigation', 'TerminalView:mounted', {
+    navType,
     innerH: window.innerHeight,
     vvHeight: window.visualViewport?.height,
     vvOffsetTop: window.visualViewport?.offsetTop,
+    keyboardAlreadyOpen,
     tabsCount: terminalStore.tabs.length,
     activeTabId: terminalStore.activeTabId,
+    pageTop: terminalPageRef.value?.style.top ?? '',
+    pageHeight: terminalPageRef.value?.style.height ?? '',
   });
   // Initialize user-specific data (history, shortcuts)
   if (authStore.username) {
@@ -486,6 +498,30 @@ onMounted(() => {
     }
   });
   intervalId = window.setInterval(loadAgents, 5000);
+
+  // [debug-blackbox] Restore terminal-page styles from sessionStorage IMMEDIATELY
+  // This prevents the 200ms gap where terminal-page has no height/position
+  // after navigating back from file manager/settings.
+  // IMPORTANT: Validate that the saved height matches current viewport.
+  // If the browser's innerHeight changed (e.g., address bar collapse, different page),
+  // the saved height would be wrong and must be skipped.
+  try {
+    const saved = sessionStorage.getItem('terminal-page-styles');
+    if (saved && terminalPageRef.value) {
+      const { top, height } = JSON.parse(saved);
+      const savedHeight = parseInt(height) || 0;
+      const currentHeight = window.innerHeight;
+      // Only restore if saved height is within 50px of current viewport
+      if (top && height && Math.abs(savedHeight - currentHeight) < 50) {
+        terminalPageRef.value.style.top = top;
+        terminalPageRef.value.style.height = height;
+        blackbox.log('navigation', 'styles-restored', { top, height, matched: true });
+      } else {
+        blackbox.log('navigation', 'styles-restored', { top, height, matched: false, savedHeight, currentHeight });
+      }
+    }
+  } catch { /* ignore parse errors */ }
+
   // Setup visual viewport handling for mobile keyboard
   cleanupViewportHandling = setupVisualViewportHandling();
 
@@ -591,6 +627,18 @@ function restoreLastSession() {
 
   console.log('Restored', tabsToRestore.length, 'sessions');
 }
+
+// [debug-blackbox] Save terminal-page styles BEFORE unmount (while DOM ref is still valid)
+onBeforeUnmount(() => {
+  if (terminalPageRef.value) {
+    try {
+      sessionStorage.setItem('terminal-page-styles', JSON.stringify({
+        top: terminalPageRef.value.style.top,
+        height: terminalPageRef.value.style.height,
+      }));
+    } catch { /* sessionStorage might be full */ }
+  }
+});
 
 onUnmounted(() => {
   blackbox.log('navigation', 'TerminalView:unmounted', {

@@ -205,4 +205,72 @@ export class FileManager {
   cancelUpload(sessionId: string): void {
     this.uploadBuffers.delete(sessionId);
   }
+
+  // Validate filename safety
+  private validateFileName(fileName: string): void {
+    if (!fileName || !fileName.trim()) {
+      throw new Error('INVALID_FILENAME: empty');
+    }
+    if (/[<>:"/\\|?*\x00-\x1f]/.test(fileName)) {
+      throw new Error('INVALID_FILENAME: illegal characters');
+    }
+    if (/^[\s.]+$/.test(fileName)) {
+      throw new Error('INVALID_FILENAME: dots or spaces only');
+    }
+    if (fileName.includes('..') || fileName.includes('/') || fileName.includes('\\')) {
+      throw new Error('INVALID_FILENAME: path traversal');
+    }
+  }
+
+  // Create a new empty file
+  async createFile(dirPath: string, fileName: string): Promise<{ path: string }> {
+    this.validateFileName(fileName);
+    const expandedDir = this.expandPath(dirPath);
+    const filePath = path.join(expandedDir, fileName);
+
+    // Security: resolved path must be within target directory
+    const resolvedDir = path.resolve(expandedDir);
+    const resolvedFile = path.resolve(filePath);
+    if (!resolvedFile.startsWith(resolvedDir + path.sep) && resolvedFile !== resolvedDir) {
+      throw new Error('PATH_TRAVERSAL');
+    }
+
+    // Check if file already exists
+    try {
+      await fs.access(filePath);
+      throw new Error('FILE_ALREADY_EXISTS');
+    } catch (err: any) {
+      if (err.message === 'FILE_ALREADY_EXISTS' || err.code === 'FILE_ALREADY_EXISTS') throw err;
+      // ENOENT = file doesn't exist, proceed
+    }
+
+    await fs.writeFile(filePath, '', 'utf-8');
+    return { path: filePath };
+  }
+
+  // Rename a file
+  async renameFile(oldPath: string, newName: string): Promise<void> {
+    this.validateFileName(newName);
+    const expandedOld = this.expandPath(oldPath);
+    const dir = path.dirname(expandedOld);
+    const newPath = path.join(dir, newName);
+
+    const resolvedDir = path.resolve(dir);
+    const resolvedNew = path.resolve(newPath);
+    if (!resolvedNew.startsWith(resolvedDir + path.sep)) {
+      throw new Error('PATH_TRAVERSAL');
+    }
+
+    await fs.rename(expandedOld, newPath);
+  }
+
+  // Delete a file or directory
+  async deleteFile(filePath: string, isDirectory: boolean): Promise<void> {
+    const expandedPath = this.expandPath(filePath);
+    if (isDirectory) {
+      await fs.rm(expandedPath, { recursive: true });
+    } else {
+      await fs.unlink(expandedPath);
+    }
+  }
 }

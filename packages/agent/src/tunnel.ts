@@ -160,18 +160,18 @@ export class Tunnel {
           const { dirPath, name } = payload;
           this.fileManager.createFile(dirPath, name)
             .then((result) => {
-              this.ws!.send(JSON.stringify({
+              this.send({
                 type: 'file:create:result',
                 payload: { success: true, path: result.path },
                 timestamp: Date.now(),
-              }));
+              });
             })
             .catch((err: Error) => {
-              this.ws!.send(JSON.stringify({
+              this.send({
                 type: 'file:create:result',
                 payload: { success: false, error: err.message },
                 timestamp: Date.now(),
-              }));
+              });
             });
           break;
         }
@@ -180,18 +180,18 @@ export class Tunnel {
           const { oldPath, newName } = payload;
           this.fileManager.renameFile(oldPath, newName)
             .then(() => {
-              this.ws!.send(JSON.stringify({
+              this.send({
                 type: 'file:rename:result',
                 payload: { success: true },
                 timestamp: Date.now(),
-              }));
+              });
             })
             .catch((err: Error) => {
-              this.ws!.send(JSON.stringify({
+              this.send({
                 type: 'file:rename:result',
                 payload: { success: false, error: err.message },
                 timestamp: Date.now(),
-              }));
+              });
             });
           break;
         }
@@ -200,18 +200,18 @@ export class Tunnel {
           const { path: filePath, isDirectory } = payload;
           this.fileManager.deleteFile(filePath, isDirectory)
             .then(() => {
-              this.ws!.send(JSON.stringify({
+              this.send({
                 type: 'file:delete:result',
                 payload: { success: true },
                 timestamp: Date.now(),
-              }));
+              });
             })
             .catch((err: Error) => {
-              this.ws!.send(JSON.stringify({
+              this.send({
                 type: 'file:delete:result',
                 payload: { success: false, error: err.message },
                 timestamp: Date.now(),
-              }));
+              });
             });
           break;
         }

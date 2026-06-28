@@ -33,8 +33,8 @@
 
       <!-- Hint bar -->
       <div class="hint-bar">
-        <span v-if="!isEditMode">← 左滑进入编辑模式</span>
-        <span v-else>右滑返回预览模式 →</span>
+        <span v-if="!isEditMode">← Swipe left to edit</span>
+        <span v-else>Swipe right to preview →</span>
       </div>
 
       <!-- Toast -->

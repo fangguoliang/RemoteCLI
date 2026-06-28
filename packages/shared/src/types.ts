@@ -42,7 +42,13 @@ export type MessageType =
   | 'voice:interpret'
   | 'voice:action-result'
   | 'voice:interpret-error'
-  | 'ui:state-sync';
+  | 'ui:state-sync'
+  | 'file:create'
+  | 'file:create:result'
+  | 'file:rename'
+  | 'file:rename:result'
+  | 'file:delete'
+  | 'file:delete:result';
 
 export interface Message {
   type: MessageType;
@@ -167,6 +173,38 @@ export interface FileValidatedPayload {
   resolvedPath: string;    // 解析后的完整路径
   exists: boolean;         // 文件是否存在
   error?: string;          // 验证失败时的错误信息
+}
+
+// File create/rename/delete types
+export interface FileCreatePayload {
+  dirPath: string;
+  name: string;
+}
+
+export interface FileCreateResultPayload {
+  success: boolean;
+  error?: string;
+  path?: string;
+}
+
+export interface FileRenamePayload {
+  oldPath: string;
+  newName: string;
+}
+
+export interface FileRenameResultPayload {
+  success: boolean;
+  error?: string;
+}
+
+export interface FileDeletePayload {
+  path: string;
+  isDirectory: boolean;
+}
+
+export interface FileDeleteResultPayload {
+  success: boolean;
+  error?: string;
 }
 
 // HTTP Proxy 相关类型

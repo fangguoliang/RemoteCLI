@@ -10,8 +10,6 @@ class FileWebSocketService {
   private transferChunks = new Map<string, { chunks: Map<number, string>; totalChunks: number; totalSize: number }>();
   private viewingPath: string | null = null;
   private currentAgentId: string | null = null;
-
-  // View content delivery callbacks
   private viewContentHandlers: ((path: string, content: string) => void)[] = [];
 
   connect(url: string, agentId?: string): Promise<void> {
@@ -382,15 +380,6 @@ class FileWebSocketService {
     }
   }
 
-  onViewContent(handler: (path: string, content: string) => void) {
-    this.viewContentHandlers.push(handler);
-  }
-
-  offViewContent(handler: (path: string, content: string) => void) {
-    const idx = this.viewContentHandlers.indexOf(handler);
-    if (idx !== -1) this.viewContentHandlers.splice(idx, 1);
-  }
-
   private handleFileError(payload: FileErrorPayload) {
     const store = useFileStore();
     store.setError(payload.message);
@@ -538,6 +527,15 @@ class FileWebSocketService {
       payload: { path, isDirectory },
       timestamp: Date.now(),
     });
+  }
+
+  onViewContent(handler: (path: string, content: string) => void) {
+    this.viewContentHandlers.push(handler);
+  }
+
+  offViewContent(handler: (path: string, content: string) => void) {
+    const idx = this.viewContentHandlers.indexOf(handler);
+    if (idx !== -1) this.viewContentHandlers.splice(idx, 1);
   }
 
   // Check actual connection state before validating

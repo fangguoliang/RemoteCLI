@@ -510,7 +510,11 @@ export class Tunnel {
 
   private send(message: unknown) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
+      try {
+        this.ws.send(JSON.stringify(message));
+      } catch (err) {
+        console.error('[Tunnel] send error:', err);
+      }
     }
   }
 

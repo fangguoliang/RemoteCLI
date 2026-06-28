@@ -23,6 +23,7 @@ import { useFileStore } from '../stores/file';
 import { useWebViewerStore } from '../stores/webViewer';
 import { fileWebSocket } from '../services/fileWebSocket';
 import { initVoiceWebSocket, clearTerminalVoiceWebSocket, sendActiveTerminalSession } from '../services/voiceWebSocket';
+import { blackbox } from '../utils/eventLogger';
 import type { Tab } from '../stores/terminal';
 import MarkdownViewer from './MarkdownViewer.vue';
 import WebViewer from './WebViewer.vue';
@@ -47,6 +48,12 @@ let userScrolledUp = false; // Track if user manually scrolled up from bottom
 // TerminalView + TerminalTab both having viewport handlers).
 let lastSentCols = 0;
 let lastSentRows = 0;
+
+// [debug-loop] Track safeFit execution stats for debug panel
+let safeFitStats = { calls: 0, skipped: 0, fitted: 0, lastRectH: 0, lastCols: 0, lastRows: 0 };
+
+// [debug-loop] Track session:output message count
+let sessionOutputCount = 0;
 
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
@@ -262,6 +269,12 @@ function handleHtmlPathClick(matchedPath: string) {
 
 // Browser visibility change handler (minimize, tab switch, mobile app switch)
 let visibilityHandler: (() => void) | null = null;
+// [debug-loop] fix v2: Handle bfcache restoration on mobile browsers
+// iOS Safari aggressively uses bfcache for back/forward navigation.
+// When page is restored, WebSocket is closed but Vue components are NOT
+// re-mounted (page state is preserved), so no reconnect happens.
+// The pageshow event with persisted=true detects bfcache restoration.
+let pageshowHandler: ((e: PageTransitionEvent) => void) | null = null;
 
 onMounted(() => {
   // Register CWD buffer parser so FileView can parse CWD from terminal buffer directly
@@ -280,6 +293,27 @@ onMounted(() => {
     }
   };
   document.addEventListener('visibilitychange', visibilityHandler);
+
+  // [debug-loop] fix v2: Handle bfcache restoration (mobile Safari)
+  // When user navigates away via browser back/forward button and returns,
+  // the page may be restored from bfcache. WebSocket is closed but Vue
+  // components are NOT re-mounted. Detect this and reconnect.
+  pageshowHandler = (event: PageTransitionEvent) => {
+    console.log('[TerminalTab][pageshow] persisted:', event.persisted, 'tab:', props.tab.id,
+      'ws.readyState:', ws?.readyState, 'sessionId:', props.tab.sessionId || 'none');
+    if (event.persisted) {
+      // Page was restored from bfcache
+      if (props.visible && (!ws || ws.readyState !== WebSocket.OPEN)) {
+        console.log('[TerminalTab][pageshow] bfcache restored, reconnecting WebSocket');
+        connectWebSocket();
+      } else if (props.visible && terminal && sessionId) {
+        // WebSocket is open but page was restored - refresh terminal
+        console.log('[TerminalTab][pageshow] bfcache restored, WS open, sending recovery');
+        sendWideCharRecovery(200);
+      }
+    }
+  };
+  window.addEventListener('pageshow', pageshowHandler);
 });
 
 onUnmounted(() => {
@@ -291,6 +325,10 @@ onUnmounted(() => {
   if (visibilityHandler) {
     document.removeEventListener('visibilitychange', visibilityHandler);
     visibilityHandler = null;
+  }
+  if (pageshowHandler) {
+    window.removeEventListener('pageshow', pageshowHandler);
+    pageshowHandler = null;
   }
   cleanup();
 });
@@ -322,6 +360,12 @@ function sendWideCharRecovery(delayMs: number = 600) {
 }
 
 watch(() => props.visible, (visible, wasVisible) => {
+  blackbox.log('navigation', 'TerminalTab:visible', {
+    tabId: props.tab.id?.slice(-6),
+    visible, wasVisible,
+    terminalInitialized,
+    hasTerminal: !!terminal,
+  });
   // Initialize terminal when becoming visible for the first time
   if (visible && !terminalInitialized) {
     initTerminal();
@@ -349,7 +393,23 @@ watch(() => props.visible, (visible, wasVisible) => {
     // that corrupt Claude Code TUI state.
     requestAnimationFrame(() => {
       if (!terminal) return;
+      const prevCols = terminal.cols;
+      const prevRows = terminal.rows;
       safeFit();
+
+      // [debug-loop] fix: After safeFit, xterm might not re-render if dimensions
+      // didn't change (e.g., when switching back from file manager with same viewport).
+      // Force refresh to ensure canvas is properly redrawn on Android Chrome.
+      if (terminal.cols === prevCols && terminal.rows === prevRows) {
+        try {
+          (terminal as any).refresh(0, terminal.rows - 1);
+          blackbox.log('fit', 'fitter:refresh', {
+            tabId: props.tab.id?.slice(-6),
+            cols: terminal.cols, rows: terminal.rows,
+            reason: 'visible-switch-no-dim-change',
+          });
+        } catch { /* refresh might not be available */ }
+      }
 
       requestAnimationFrame(() => {
         if (!terminal) return;
@@ -453,13 +513,45 @@ function setupScrollTracking() {
 
 // Safely fit terminal - only when tab is visible and container has valid size
 function safeFit() {
-  if (!props.visible || !terminal || !fitAddon || !terminalRef.value) return;
+  safeFitStats.calls++;
+  if (!props.visible || !terminal || !fitAddon || !terminalRef.value) {
+    safeFitStats.skipped++;
+    (window as any).__safeFitStats = { ...safeFitStats, reason: !props.visible ? 'notVisible' : !terminal ? 'noTerminal' : !fitAddon ? 'noFitAddon' : 'noRef' };
+    return;
+  }
 
   const rect = terminalRef.value.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return;
+  safeFitStats.lastRectH = Math.round(rect.height);
+  if (rect.width <= 0 || rect.height <= 0) {
+    safeFitStats.skipped++;
+    (window as any).__safeFitStats = { ...safeFitStats, reason: 'zeroRect' };
+    console.log('[TerminalTab][safeFit] SKIPPED: rect is zero/negative',
+      JSON.stringify({ w: rect.width, h: rect.height }),
+      'visible:', props.visible, 'innerHeight:', window.innerHeight);
+    return;
+  }
 
+  // [debug-loop] Log fit dimensions
+  console.log('[TerminalTab][safeFit] fitting:',
+    JSON.stringify({ w: rect.width, h: rect.height }),
+    'xterm before:', terminal.cols, 'x', terminal.rows,
+    'innerHeight:', window.innerHeight);
   shouldSendResize = true;
+  const prevCols = terminal.cols;
+  const prevRows = terminal.rows;
   fitAddon.fit();
+  safeFitStats.fitted++;
+  safeFitStats.lastCols = terminal.cols;
+  safeFitStats.lastRows = terminal.rows;
+  (window as any).__safeFitStats = { ...safeFitStats, reason: 'ok' };
+  blackbox.log('fit', 'safeFit:done', {
+    tabId: props.tab.id?.slice(-6),
+    rectW: Math.round(rect.width), rectH: Math.round(rect.height),
+    beforeCols: prevCols, beforeRows: prevRows,
+    afterCols: terminal.cols, afterRows: terminal.rows,
+    changed: prevCols !== terminal.cols || prevRows !== terminal.rows,
+  });
+  console.log('[TerminalTab][safeFit] after fit: xterm', terminal.cols, 'x', terminal.rows);
 }
 
 function initTerminal() {
@@ -507,12 +599,174 @@ function initTerminal() {
   serializeAddon = new SerializeAddon();
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(serializeAddon);
-  terminal.open(terminalRef.value);
 
-  // Attach terminal instance to DOM for external access (e.g., testing, devtools)
-  if (terminalRef.value) {
-    (terminalRef.value as any).__xterm = terminal;
+  // [debug-loop] fix v3: Open terminal hidden, reveal after keyboard settles.
+  //
+  // Root cause (from blackbox data):
+  // - v2 waited for viewport stability BEFORE terminal.open(), but the keyboard
+  //   opens ~600ms after mount (triggered by tryFocus). The 300ms wait was not
+  //   long enough — it detected "stable" innerHeight before the keyboard opened,
+  //   then terminal.open() was still called at the wrong (large) size.
+  //
+  // New approach:
+  // 1. Open terminal IMMEDIATELY (hidden with opacity:0)
+  // 2. Watch innerHeight for keyboard-open detection (drop of >50px)
+  // 3. After keyboard detected + settled (3 stable readings), reveal terminal
+  // 4. If no keyboard after 2s, reveal anyway (desktop/no-keyboard case)
+  //
+  // This guarantees xterm canvas is created at the FINAL correct size,
+  // avoiding the Android Chrome canvas re-render bug entirely.
+  blackbox.log('terminal', 'waitingForContainer', {
+    tabId: props.tab.id?.slice(-6),
+    innerH: window.innerHeight,
+    vvHeight: window.visualViewport?.height,
+  });
+  const waitForContainerAndOpen = (attempt: number = 0) => {
+    if (!terminalRef.value) {
+      if (attempt < 30) {
+        setTimeout(() => waitForContainerAndOpen(attempt + 1), 50);
+      } else {
+        blackbox.log('terminal', 'openTimeout', { tabId: props.tab.id?.slice(-6), attempt });
+        terminal!.open(terminalRef.value!);
+        onTerminalOpened();
+      }
+      return;
+    }
+    const rect = terminalRef.value.getBoundingClientRect();
+    if (rect.height <= 0 && attempt < 30) {
+      setTimeout(() => waitForContainerAndOpen(attempt + 1), 50);
+      return;
+    }
+
+    blackbox.log('terminal', 'containerReady', {
+      tabId: props.tab.id?.slice(-6),
+      attempt, rectW: Math.round(rect.width), rectH: Math.round(rect.height),
+    });
+
+    // Hide terminal wrapper BEFORE opening — prevents flash of incorrectly-sized content
+    const wrapper = terminalRef.value?.closest('.terminal-wrapper') as HTMLElement | null;
+    if (wrapper) {
+      wrapper.style.opacity = '0';
+    }
+
+    // Open terminal immediately (hidden). The canvas initializes at current container size.
+    terminal!.open(terminalRef.value!);
+    onTerminalOpened();
+
+    // Now watch for keyboard: innerHeight will drop when keyboard opens.
+    // After it settles, we know the final viewport size and can reveal correctly.
+    const initialH = window.innerHeight;
+    let keyboardDetected = false;
+    let stableCount = 0;
+    let lastH = initialH;
+    let checkAttempts = 0;
+    let revealed = false;
+
+    const revealTerminal = (reason: string) => {
+      if (revealed) return;
+      revealed = true;
+      if (wrapper) {
+        wrapper.style.opacity = '';
+      }
+      blackbox.log('terminal', 'revealed', {
+        tabId: props.tab.id?.slice(-6),
+        innerH: window.innerHeight,
+        vvHeight: window.visualViewport?.height,
+        keyboardDetected,
+        reason,
+        checkAttempts,
+      });
+      // Final fit at revealed dimensions (keyboard has settled)
+      safeFit();
+      try { (terminal! as any).refresh(0, terminal!.rows - 1); } catch { }
+
+      // Delayed second refresh to ensure canvas is fully rendered.
+      // On Android Chrome with heavy pages (md-editor-v3 etc.), xterm's canvas
+      // renderer may need extra time after terminal.open() to initialize.
+      // The immediate refresh() above may fire before the renderer is ready.
+      // A delayed refresh after a few animation frames catches the renderer when ready.
+      setTimeout(() => {
+        try { (terminal! as any).refresh(0, terminal!.rows - 1); } catch { }
+      }, 200);
+
+      // NOW connect WebSocket and focus — terminal is at correct final size
+      connectWebSocket();
+      setTimeout(() => {
+        console.log('[TerminalTab][focus] attempting focus after reveal');
+        tryFocus();
+      }, 100);
+    };
+
+    const checkKeyboard = () => {
+      if (revealed) return;
+      checkAttempts++;
+      const currentH = window.innerHeight;
+
+      if (Math.abs(currentH - initialH) > 50) {
+        keyboardDetected = true;
+      }
+
+      if (keyboardDetected) {
+        // Keyboard opened — wait for it to settle (animation complete)
+        if (Math.abs(currentH - lastH) <= 2) {
+          stableCount++;
+        } else {
+          stableCount = 0;
+          lastH = currentH;
+        }
+        if (stableCount >= 5) {
+          revealTerminal('keyboard-settled');
+          return;
+        }
+      }
+
+      // Timeout: if no keyboard after 1500ms, reveal anyway
+      // (Android keyboard takes ~300-500ms to open; desktop has no keyboard.
+      //  Increased from 500ms to 1500ms to account for heavier page loads
+      //  from new file management views with md-editor-v3.)
+      if (checkAttempts >= 15) {
+        revealTerminal('timeout');
+        return;
+      }
+
+      setTimeout(checkKeyboard, 100);
+    };
+
+    setTimeout(checkKeyboard, 100);
+  };
+
+  function onTerminalOpened() {
+    blackbox.log('terminal', 'opened', {
+      tabId: props.tab.id?.slice(-6),
+      cols: terminal!.cols, rows: terminal!.rows,
+      innerH: window.innerHeight,
+      vvHeight: window.visualViewport?.height,
+      containerRect: terminalRef.value ? JSON.stringify({
+        w: Math.round(terminalRef.value.getBoundingClientRect().width),
+        h: Math.round(terminalRef.value.getBoundingClientRect().height),
+      }) : 'null',
+    });
+
+    // Initial fit (will be re-done after reveal when keyboard has settled)
+    safeFit();
+
+    // Attach terminal instance to DOM for external access
+    if (terminalRef.value) {
+      (terminalRef.value as any).__xterm = terminal;
+    }
+
+    // Restore scrollback from sessionStorage (at correct dimensions after reveal)
+    const savedScrollback = sessionStorage.getItem(`scrollback:${props.tab.id}`);
+    if (savedScrollback && terminal) {
+      terminal.write(savedScrollback);
+    }
+
+    // NOTE: connectWebSocket() and tryFocus() are deferred to revealTerminal()
+    // which fires after keyboard has settled. This ensures session:resume
+    // is sent with the correct terminal dimensions.
   }
+
+  waitForContainerAndOpen();
 
   // Helper: check if charBefore is a valid path separator
   // Special handling for colon: if the matched part starts with [A-Za-z]: (Windows drive),
@@ -1418,21 +1672,17 @@ function initTerminal() {
 
   // Delay initial fit to ensure DOM is rendered
   setTimeout(() => {
+    // [debug-loop] Log terminal dimensions at initialization
+    const rect = terminalRef.value?.getBoundingClientRect();
+    console.log('[TerminalTab][init] container rect:', JSON.stringify({ w: rect?.width, h: rect?.height }),
+      'xterm:', terminal?.cols, 'x', terminal?.rows,
+      'innerHeight:', window.innerHeight,
+      'visualViewport:', JSON.stringify({ h: window.visualViewport?.height, offsetTop: window.visualViewport?.offsetTop }));
     safeFit();
-    // Start WebSocket connection after terminal is ready
-    connectWebSocket();
+    // NOTE: connectWebSocket() and scrollback restoration are deferred to
+    // onTerminalOpened() which fires after viewport has stabilized
+    // (keyboard animation complete). See waitForContainerAndOpen().
   }, 50);
-
-  // Auto-focus terminal after initialization
-  setTimeout(() => {
-    tryFocus();
-  }, 200);
-
-  // Restore scrollback from sessionStorage if exists
-  const savedScrollback = sessionStorage.getItem(`scrollback:${props.tab.id}`);
-  if (savedScrollback && terminal) {
-    terminal.write(savedScrollback);
-  }
 
   // Start periodic scrollback save
   saveScrollbackTimer = window.setInterval(() => {
@@ -1506,8 +1756,20 @@ function initTerminal() {
   // Register fit function for this tab (called on viewport resize)
   terminalStore.registerTabFitter(props.tab.id, () => {
     if (terminal) {
+      const prevCols = terminal.cols;
+      const prevRows = terminal.rows;
       safeFit();
-      // Call forceScrollToBottom to reset userScrolledUp flag and scroll to bottom
+      // [debug-loop] fix: After safeFit, xterm might not re-render if dimensions
+      // didn't change. Force refresh.
+      if (terminal.cols === prevCols && terminal.rows === prevRows) {
+        try {
+          (terminal as any).refresh(0, terminal.rows - 1);
+          blackbox.log('fit', 'fitter:refresh', {
+            tabId: props.tab.id?.slice(-6),
+            cols: terminal.cols, rows: terminal.rows,
+          });
+        } catch { /* refresh might not be available */ }
+      }
       forceScrollToBottom();
     }
   });
@@ -1549,10 +1811,15 @@ function connectWebSocket() {
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
+    blackbox.log('ws', 'open', {
+      tabId: props.tab.id?.slice(-6),
+      agentId: props.tab.agentId,
+      sessionId: props.tab.sessionId?.slice(-6) || null,
+    });
     console.log('[TerminalTab] WebSocket opened, calling initVoiceWebSocket');
     ws?.send(JSON.stringify({
       type: 'auth',
-      payload: { userId: authStore.userId, agentId: props.tab.agentId },
+      payload: { userId: authStore.userId, agentId: props.tab.agentId, sessionId: props.tab.sessionId || null },
       timestamp: Date.now(),
     }));
     // Initialize voice WebSocket with terminal WebSocket
@@ -1567,6 +1834,11 @@ function connectWebSocket() {
   };
 
   ws.onclose = () => {
+    blackbox.log('ws', 'close', {
+      tabId: props.tab.id?.slice(-6),
+      sessionId: props.tab.sessionId?.slice(-6) || 'none',
+    });
+    console.log('[TerminalTab] WebSocket closed, tab:', props.tab.id, 'sessionId:', props.tab.sessionId || 'none');
     status.value = 'disconnected';
   };
 
@@ -1578,12 +1850,22 @@ function connectWebSocket() {
 function handleWsMessage(msg: any) {
   switch (msg.type) {
     case 'auth:result':
-      console.log('[TerminalTab] auth:result received:', msg.payload);
+      blackbox.log('ws', 'auth:result', {
+        tabId: props.tab.id?.slice(-6),
+        success: msg.payload.success,
+        hasSessionId: !!props.tab.sessionId,
+        error: msg.payload.error,
+      });
+      console.log('[TerminalTab] auth:result received:', msg.payload, '| sessionId:', props.tab.sessionId ? 'present' : 'none');
       if (msg.payload.success) {
-        // Check if we have a sessionId to resume
         if (props.tab.sessionId) {
           const resumeCols = terminal?.cols || 80;
           const resumeRows = terminal?.rows || 24;
+          blackbox.log('ws', 'session:resume', {
+            tabId: props.tab.id?.slice(-6),
+            sessionId: props.tab.sessionId?.slice(-6),
+            cols: resumeCols, rows: resumeRows,
+          });
           // Try to resume existing session
           ws?.send(JSON.stringify({
             type: 'session:resume',
@@ -1607,6 +1889,13 @@ function handleWsMessage(msg: any) {
       }
       break;
     case 'session:created':
+    case 'session:created':
+      blackbox.log('ws', 'session:created', {
+        tabId: props.tab.id?.slice(-6),
+        success: msg.payload.success,
+        sessionId: msg.payload.sessionId?.slice(-6),
+        error: msg.payload.error,
+      });
       console.log('[TerminalTab] session:created received:', msg.payload);
       if (msg.payload.success) {
         sessionId = msg.payload.sessionId;
@@ -1631,17 +1920,43 @@ function handleWsMessage(msg: any) {
       if (msg.payload.success) {
         sessionId = props.tab.sessionId || null;
         status.value = 'connected';
+        blackbox.log('ws', 'session:resumed', {
+          tabId: props.tab.id?.slice(-6),
+          sessionId: sessionId?.slice(-6),
+          cols: terminal?.cols, rows: terminal?.rows,
+          innerH: window.innerHeight,
+          vvHeight: window.visualViewport?.height,
+        });
+        // [debug-loop] Log session:resumed with terminal dimensions
+        const rect = terminalRef.value?.getBoundingClientRect();
+        console.log('[TerminalTab][session:resumed] terminal:', terminal?.cols, 'x', terminal?.rows,
+          'container:', JSON.stringify({ w: rect?.width, h: rect?.height }),
+          'innerHeight:', window.innerHeight,
+          'visualViewport.h:', window.visualViewport?.height);
         // [debug-loop] fix v3: After session resume, send wide-char recovery
         // Wait for agent's bump resize to complete (~550ms), then send recovery
         sendWideCharRecovery(600);
 
         // Also do safeFit to ensure terminal dimensions are correct
+        // [debug-loop] fix v4: Two delayed fits — one after bump resize, one later
+        // to handle Android keyboard animation that may still be in progress.
         setTimeout(() => {
           if (terminal && fitAddon) {
+            console.log('[TerminalTab][session:resumed] fit@1000ms, innerHeight:', window.innerHeight);
             safeFit();
           }
         }, 1000);
+        setTimeout(() => {
+          if (terminal && fitAddon) {
+            console.log('[TerminalTab][session:resumed] fit@2000ms, innerHeight:', window.innerHeight);
+            safeFit();
+          }
+        }, 2000);
       } else {
+        blackbox.log('ws', 'session:resumed:FAILED', {
+          tabId: props.tab.id?.slice(-6),
+          error: msg.payload.error,
+        });
         // Resume failed - session no longer exists on server
         // Remove from history to prevent zombie sessions
         if (props.tab.sessionId) {
@@ -1672,6 +1987,16 @@ function handleWsMessage(msg: any) {
       break;
     case 'session:output':
       if (terminal) {
+        sessionOutputCount++;
+        // Log first few and every 50th message to track data flow
+        if (sessionOutputCount <= 3 || sessionOutputCount % 50 === 0) {
+          blackbox.log('ws', 'session:output', {
+            tabId: props.tab.id?.slice(-6),
+            count: sessionOutputCount,
+            dataLen: msg.payload.data?.length || 0,
+            dataPreview: msg.payload.data?.slice(0, 40)?.replace(/[\r\n]/g, '\\n'),
+          });
+        }
         terminal.write(msg.payload.data, () => {
           // Callback after write is processed
         });

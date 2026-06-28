@@ -33,6 +33,9 @@ import { onUnmounted } from 'vue';
 import type { FileEntry } from '@remotecli/shared';
 import { isViewable, isLargeFile } from '@/utils/fileType';
 
+const PDF_PREVIEW_LIMIT = 10 * 1024 * 1024; // 10MB
+const HTML_MD_PREVIEW_LIMIT = 5 * 1024 * 1024; // 5MB
+
 defineProps<{
   entries: FileEntry[];
   loading: boolean;
@@ -51,6 +54,16 @@ let touchStartX = 0;
 let touchStartY = 0;
 let longPressTriggered = false;
 
+function canPreview(entry: FileEntry): boolean {
+  const name = entry.name.toLowerCase();
+  // PDF: browser renders natively, allow up to 10MB
+  if (name.endsWith('.pdf')) return (entry.size ?? 0) <= PDF_PREVIEW_LIMIT;
+  // HTML/MD: rendered in overlay, allow up to 5MB
+  if (name.endsWith('.html') || name.endsWith('.htm') || name.endsWith('.md')) return (entry.size ?? 0) <= HTML_MD_PREVIEW_LIMIT;
+  // Other types (txt, json, images): respect the 500KB threshold
+  return !isLargeFile(entry.size);
+}
+
 function onEntryClick(entry: FileEntry) {
   if (longPressTriggered) {
     longPressTriggered = false;
@@ -58,7 +71,7 @@ function onEntryClick(entry: FileEntry) {
   }
   if (entry.isDirectory) {
     emit('browse', entry.name);
-  } else if (isViewable(entry.name) && !isLargeFile(entry.size)) {
+  } else if (isViewable(entry.name) && canPreview(entry)) {
     emit('preview', entry.name);
   } else {
     emit('download', entry.name);

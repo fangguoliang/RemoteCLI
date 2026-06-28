@@ -9,8 +9,10 @@ class FileWebSocketService {
   private messageHandlers = new Map<string, MessageHandler[]>();
   private transferChunks = new Map<string, { chunks: Map<number, string>; totalChunks: number; totalSize: number }>();
   private viewingPath: string | null = null;
+  private viewingRequested = new Set<string>(); // track all viewing download requests
   private currentAgentId: string | null = null;
   private viewContentHandlers: ((path: string, content: string) => void)[] = [];
+  private viewErrorHandlers: ((path: string, error: string) => void)[] = [];
 
   connect(url: string, agentId?: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -68,6 +70,10 @@ class FileWebSocketService {
             this.transferChunks.delete(key);
           }
         }
+        // Clean up view handlers (no auto-reconnect, so they'd never fire)
+        this.viewContentHandlers = [];
+        this.viewErrorHandlers = [];
+        this.viewingRequested.clear();
       };
     });
   }
@@ -153,6 +159,13 @@ class FileWebSocketService {
     // Check if this is a "for viewing" download
     if (normalizedViewingPath && normalizedViewingPath === normalizedPayloadPath) {
       this.assembleViewContent(payload);
+      return;
+    }
+
+    // If this path was requested for viewing but has been superseded, discard it
+    // (prevents stale viewing downloads from triggering unexpected file downloads)
+    if (this.viewingRequested.has(normalizedPayloadPath)) {
+      this.viewingRequested.delete(normalizedPayloadPath);
       return;
     }
 
@@ -264,6 +277,17 @@ class FileWebSocketService {
     return bytes;
   }
 
+  // 将 Uint8Array 转换为 Base64 字符串（分块避免调用栈溢出）
+  private uint8ArrayToBase64(bytes: Uint8Array): string {
+    const chunkSize = 8192;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+      binary += String.fromCharCode.apply(null, Array.from(chunk));
+    }
+    return btoa(binary);
+  }
+
   private assembleViewContent(payload: FileDataPayload) {
     const store = useFileStore();
     const viewId = 'viewer-' + payload.path;
@@ -300,20 +324,30 @@ class FileWebSocketService {
           }
         }
 
-        // Detect encoding from BOM and decode accordingly
+        // Determine if binary file (needs base64) or text file (needs UTF-8 decode)
+        const fileName = payload.path.split(/[/\\]/).pop() || '';
+        const ext = fileName.split('.').pop()?.toLowerCase() || '';
+        const isBinaryType = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'pdf'].includes(ext);
+
         let content: string;
-        if (allBytes.length >= 2 && allBytes[0] === 0xff && allBytes[1] === 0xfe) {
-          // UTF-16LE BOM
-          content = new TextDecoder('utf-16le').decode(allBytes.subarray(2));
-        } else if (allBytes.length >= 2 && allBytes[0] === 0xfe && allBytes[1] === 0xff) {
-          // UTF-16BE BOM
-          content = new TextDecoder('utf-16be').decode(allBytes.subarray(2));
-        } else if (allBytes.length >= 3 && allBytes[0] === 0xef && allBytes[1] === 0xbb && allBytes[2] === 0xbf) {
-          // UTF-8 BOM
-          content = new TextDecoder('utf-8').decode(allBytes.subarray(3));
+        if (isBinaryType) {
+          // Keep as base64 for binary types (images, PDF)
+          content = this.uint8ArrayToBase64(allBytes);
         } else {
-          // Default: UTF-8 (no BOM)
-          content = new TextDecoder('utf-8').decode(allBytes);
+          // Detect encoding from BOM and decode accordingly
+          if (allBytes.length >= 2 && allBytes[0] === 0xff && allBytes[1] === 0xfe) {
+            // UTF-16LE BOM
+            content = new TextDecoder('utf-16le').decode(allBytes.subarray(2));
+          } else if (allBytes.length >= 2 && allBytes[0] === 0xfe && allBytes[1] === 0xff) {
+            // UTF-16BE BOM
+            content = new TextDecoder('utf-16be').decode(allBytes.subarray(2));
+          } else if (allBytes.length >= 3 && allBytes[0] === 0xef && allBytes[1] === 0xbb && allBytes[2] === 0xbf) {
+            // UTF-8 BOM
+            content = new TextDecoder('utf-8').decode(allBytes.subarray(3));
+          } else {
+            // Default: UTF-8 (no BOM)
+            content = new TextDecoder('utf-8').decode(allBytes);
+          }
         }
 
         // Store content and show viewer
@@ -329,6 +363,7 @@ class FileWebSocketService {
         // Cleanup
         this.transferChunks.delete(viewId);
         this.viewingPath = null;
+        this.viewingRequested.delete(payload.path.replace(/\\/g, '/'));
       }
     }
   }
@@ -387,12 +422,16 @@ class FileWebSocketService {
 
     // Handle viewing download error
     if (payload.path && this.viewingPath === payload.path) {
+      const errorPath = payload.path;
       store.setViewerLoading(false);
       store.setValidatingPath(null);
       this.viewingPath = null;
+      this.viewingRequested.delete(errorPath.replace(/\\/g, '/'));
       // Clean up viewer chunks
-      const viewId = 'viewer-' + payload.path;
+      const viewId = 'viewer-' + errorPath;
       this.transferChunks.delete(viewId);
+      // Notify error handlers so overlay can stop loading
+      this.viewErrorHandlers.forEach(h => h(errorPath, payload.message));
     }
 
     // 更新相关传输状态
@@ -506,6 +545,14 @@ class FileWebSocketService {
   }
 
   createFile(dirPath: string, fileName: string, agentId: string) {
+    if (!this.isConnected()) {
+      // Emit error result asynchronously so callers' handlers still work
+      queueMicrotask(() => {
+        const handlers = this.messageHandlers.get('file:create:result') || [];
+        handlers.forEach(h => h({ success: false, error: 'Not connected' }));
+      });
+      return;
+    }
     this.send({
       type: 'file:create',
       payload: { dirPath, name: fileName, agentId },
@@ -514,6 +561,13 @@ class FileWebSocketService {
   }
 
   renameFile(oldPath: string, newName: string) {
+    if (!this.isConnected()) {
+      queueMicrotask(() => {
+        const handlers = this.messageHandlers.get('file:rename:result') || [];
+        handlers.forEach(h => h({ success: false, error: 'Not connected' }));
+      });
+      return;
+    }
     this.send({
       type: 'file:rename',
       payload: { oldPath, newName },
@@ -522,6 +576,13 @@ class FileWebSocketService {
   }
 
   deleteFile(path: string, isDirectory: boolean) {
+    if (!this.isConnected()) {
+      queueMicrotask(() => {
+        const handlers = this.messageHandlers.get('file:delete:result') || [];
+        handlers.forEach(h => h({ success: false, error: 'Not connected' }));
+      });
+      return;
+    }
     this.send({
       type: 'file:delete',
       payload: { path, isDirectory },
@@ -536,6 +597,15 @@ class FileWebSocketService {
   offViewContent(handler: (path: string, content: string) => void) {
     const idx = this.viewContentHandlers.indexOf(handler);
     if (idx !== -1) this.viewContentHandlers.splice(idx, 1);
+  }
+
+  onViewError(handler: (path: string, error: string) => void) {
+    this.viewErrorHandlers.push(handler);
+  }
+
+  offViewError(handler: (path: string, error: string) => void) {
+    const idx = this.viewErrorHandlers.indexOf(handler);
+    if (idx !== -1) this.viewErrorHandlers.splice(idx, 1);
   }
 
   // Check actual connection state before validating
@@ -580,6 +650,7 @@ class FileWebSocketService {
 
     // Mark this as a "for viewing" download
     this.viewingPath = path;
+    this.viewingRequested.add(path);
 
     this.send({
       type: 'file:download',

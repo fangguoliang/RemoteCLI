@@ -88,18 +88,17 @@
 
     <!-- Action Bar -->
     <div class="action-bar" v-if="selectedAgentId">
-      <input
-        ref="pathInput"
-        type="text"
-        class="path-input"
-        v-model="gotoPath"
-        placeholder="D: or path..."
-        @keyup.enter="goToPath"
-      />
-      <button class="icon-btn new-btn" @click="showCreateModal = true" title="New file" aria-label="New file">
-        <span style="font-size: 18px;">+</span>
-      </button>
-      <button class="action-btn" @click="goToPath" aria-label="跳转到路径">Go</button>
+      <div class="path-go-group">
+        <input
+          ref="pathInput"
+          type="text"
+          class="path-input"
+          v-model="gotoPath"
+          placeholder="D: or path..."
+          @keyup.enter="goToPath"
+        />
+        <button class="action-btn go-btn" @click="goToPath" aria-label="跳转到路径">Go</button>
+      </div>
       <button class="icon-btn" @click="triggerUpload" title="上传" aria-label="上传文件">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
       </button>
@@ -108,6 +107,9 @@
       </button>
       <button class="icon-btn save-icon-btn" @click="openSaveModal" :disabled="!currentPath" title="保存快捷方式" aria-label="保存为快捷方式">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      </button>
+      <button class="icon-btn new-btn" @click="showCreateModal = true" title="New file" aria-label="New file">
+        <span style="font-size: 18px;">+</span>
       </button>
     </div>
 
@@ -228,10 +230,23 @@ function closeCreateModal() {
 }
 
 function handleCreateFile() {
-  if (!newFileName.value.trim() || !currentPath.value || !selectedAgentId.value) return;
   createError.value = '';
 
-  fileWebSocket.createFile(currentPath.value, newFileName.value.trim(), selectedAgentId.value);
+  if (!selectedAgentId.value) {
+    createError.value = 'No agent selected';
+    return;
+  }
+  if (!currentPath.value) {
+    createError.value = 'No directory selected';
+    return;
+  }
+  if (!newFileName.value.trim()) {
+    createError.value = 'Please enter a filename';
+    return;
+  }
+
+  const fileName = newFileName.value.trim();
+  fileWebSocket.createFile(currentPath.value, fileName, selectedAgentId.value);
 
   const handler = (data: unknown) => {
     const payload = data as { success: boolean; error?: string; path?: string };
@@ -239,7 +254,7 @@ function handleCreateFile() {
       closeCreateModal();
       refresh();
       // Auto-open for editing if txt/json/md
-      const ext = newFileName.value.split('.').pop()?.toLowerCase();
+      const ext = fileName.split('.').pop()?.toLowerCase();
       if (ext && ['txt', 'json', 'md'].includes(ext) && payload.path) {
         setTimeout(() => {
           const overlay = fileOverlayRef.value?.overlay;
@@ -249,7 +264,16 @@ function handleCreateFile() {
         }, 500);
       }
     } else {
-      createError.value = payload.error || 'Failed to create file';
+      const errMsg = payload.error || 'Failed to create file';
+      if (errMsg.includes('FILE_ALREADY_EXISTS') || errMsg.includes('already exists')) {
+        createError.value = `"${fileName}" already exists`;
+      } else if (errMsg.includes('INVALID_FILENAME')) {
+        createError.value = 'Invalid filename (no special chars like / \\ : * ? " < > |)';
+      } else if (errMsg.includes('PATH_TRAVERSAL')) {
+        createError.value = 'Invalid path';
+      } else {
+        createError.value = errMsg;
+      }
     }
     fileWebSocket.off('file:create:result', handler);
   };
@@ -281,9 +305,21 @@ function onPreviewEntry(name: string) {
         overlay.setMode('edit');
       }
       fileWebSocket.offViewContent(contentHandler);
+      fileWebSocket.offViewError(errorHandler);
+    }
+  };
+  const errorHandler = (path: string, _error: string) => {
+    const normalizedPath = path.replace(/\//g, '\\');
+    const normalizedOverlay = overlay.path.value.replace(/\//g, '\\');
+    if (normalizedPath === normalizedOverlay) {
+      overlay.loading.value = false;
+      overlay.content.value = '';
+      fileWebSocket.offViewContent(contentHandler);
+      fileWebSocket.offViewError(errorHandler);
     }
   };
   fileWebSocket.onViewContent(contentHandler);
+  fileWebSocket.onViewError(errorHandler);
   fileWebSocket.downloadForView(filePath);
 }
 
@@ -887,10 +923,23 @@ watch(
   padding: var(--space-3);
   background: var(--bg-root);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  border-right: none;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
   color: var(--text-primary);
   font-size: 14px;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.path-go-group {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.go-btn {
+  border-left: none;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  flex-shrink: 0;
 }
 
 .path-input::placeholder {
@@ -1053,13 +1102,13 @@ watch(
 
 .form-hint {
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: 0.95rem;
   margin: var(--space-2) 0 0;
 }
 
 .form-error {
   color: var(--error);
-  font-size: 0.85rem;
+  font-size: 1rem;
   margin: var(--space-2) 0 0;
 }
 
@@ -1123,7 +1172,7 @@ watch(
 .modal-header h3 {
   margin: 0;
   color: var(--text-primary);
-  font-size: 1.1rem;
+  font-size: 1.3rem;
   font-weight: 600;
 }
 
@@ -1145,7 +1194,7 @@ watch(
   display: block;
   margin-bottom: var(--space-2);
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: 1rem;
   font-weight: 500;
 }
 
@@ -1156,7 +1205,7 @@ watch(
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   color: var(--text-primary);
-  font-size: 1rem;
+  font-size: 1.15rem;
   box-sizing: border-box;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
@@ -1192,7 +1241,7 @@ watch(
   border: none;
   border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 1.05rem;
   font-weight: 500;
   transition: background var(--transition-fast), opacity var(--transition-fast);
 }

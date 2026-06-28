@@ -142,6 +142,48 @@
         </div>
       </div>
     </div>
+    <!-- Debug panel - shows viewport metrics for mobile debugging -->
+    <div class="debug-panel" v-if="showDebugPanel" @mousedown.prevent @touchstart.prevent>
+      <div class="debug-header" @click="debugCollapsed = !debugCollapsed">
+        <span>🔍 Debug {{ debugCollapsed ? '▶' : '▼' }}</span>
+        <span class="debug-actions">
+          <button @click.stop="copyBlackbox" @touchend.stop.prevent="copyBlackbox" class="debug-export">上报</button>
+          <button @click.stop="showDebugPanel = false" class="debug-close">×</button>
+        </span>
+      </div>
+      <div v-show="!debugCollapsed" class="debug-body">
+        <div>innerH: {{ debugInfo.innerHeight }}</div>
+        <div>vv.height: {{ debugInfo.vvHeight }}</div>
+        <div>vv.offsetTop: {{ debugInfo.vvOffsetTop }}</div>
+        <div>keyboardH: {{ debugInfo.keyboardHeight }}</div>
+        <div>page.top: {{ debugInfo.pageTop }}</div>
+        <div>page.height: {{ debugInfo.pageHeight }}</div>
+        <div>page.bottom: {{ debugInfo.pageBottom }}</div>
+        <div>containerH: {{ debugInfo.containerHeight }}</div>
+        <div>xterm: {{ debugInfo.xtermCols }}×{{ debugInfo.xtermRows }}</div>
+        <div>rect.top: {{ debugInfo.pageRectTop }}</div>
+        <div>rect.bottom: {{ debugInfo.pageRectBottom }}</div>
+        <div>rect.height: {{ debugInfo.pageRectHeight }}</div>
+        <div class="debug-separator">── 内容位移机制 ──</div>
+        <div>fitCount: {{ debugInfo.fitCount }}</div>
+        <div>wrapperH: {{ debugInfo.wrapperRectH }}</div>
+        <div>wrapperW: {{ debugInfo.wrapperRectW }}</div>
+        <div>activeTab: {{ debugInfo.activeTabId?.slice(-6) || 'none' }}</div>
+        <div>fitterCount: {{ debugInfo.fitterCount }}</div>
+        <div class="debug-separator">── safeFit 统计 ──</div>
+        <div>sf.calls: {{ debugInfo.sfCalls }}</div>
+        <div>sf.skipped: {{ debugInfo.sfSkipped }}</div>
+        <div>sf.fitted: {{ debugInfo.sfFitted }}</div>
+        <div>sf.rectH: {{ debugInfo.sfLastRectH }}</div>
+        <div>sf.rows: {{ debugInfo.sfLastRows }}</div>
+        <div>sf.reason: {{ debugInfo.sfReason }}</div>
+        <div class="debug-separator">── 黑匣子 ({{ debugInfo.bbCount }}) ──</div>
+        <div v-for="(evt, i) in debugInfo.bbRecent" :key="i" class="debug-bb-event">
+          {{ evt.t }}ms {{ evt.cat }}:{{ evt.event }}
+          <span v-if="evt.data" class="debug-bb-data">{{ formatBbData(evt.data) }}</span>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -153,6 +195,7 @@ import { useTerminalStore } from '../stores/terminal';
 import { useSettingsStore } from '../stores/settings';
 import TerminalTab from '../components/TerminalTab.vue';
 import { sendActiveTerminalSession } from '../services/voiceWebSocket';
+import { blackbox } from '../utils/eventLogger';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -175,6 +218,46 @@ const showSaveModal = ref(false);
 const shortcutName = ref('');
 const selectedCommands = ref<boolean[]>([]);
 
+// Debug panel state — only visible with ?debug URL param or localStorage
+const showDebugPanel = ref(
+  new URLSearchParams(window.location.search).has('debug') ||
+  localStorage.getItem('debug-panel') === 'true'
+);
+const debugCollapsed = ref(false); // Expanded by default
+const debugInfo = ref({
+  innerHeight: 0,
+  vvHeight: 0,
+  vvOffsetTop: 0,
+  keyboardHeight: 0,
+  pageTop: '',
+  pageHeight: '',
+  pageBottom: '',
+  containerHeight: 0,
+  xtermCols: 0,
+  xtermRows: 0,
+  pageRectTop: 0,
+  pageRectBottom: 0,
+  pageRectHeight: 0,
+  // New debug vars to observe "content shift down" mechanism
+  fitCount: 0,
+  wrapperRectH: 0,
+  wrapperRectW: 0,
+  activeTabId: '',
+  fitterCount: 0,
+  // safeFit stats from TerminalTab
+  sfCalls: 0,
+  sfSkipped: 0,
+  sfFitted: 0,
+  sfLastRectH: 0,
+  sfLastRows: 0,
+  sfReason: '',
+  // Blackbox
+  bbCount: 0,
+  bbRecent: [] as Array<{ t: number; cat: string; event: string; data?: Record<string, unknown> }>,
+});
+let debugInterval: number | null = null;
+let fitCallCount = 0; // Track how many times fitActiveTab is called
+
 // Selected command texts
 const selectedCommandTexts = computed(() => {
   return capturedCommands.value
@@ -191,49 +274,144 @@ function setupVisualViewportHandling(): (() => void) | null {
 
   const terminalPage = terminalPageRef.value;
   let resizeTimeout: number | null = null;
+  let rafId: number | null = null;
+  let lastAppliedHeight = 0;
+  let stableCount = 0;
+  let adjustStartTime = Date.now();
 
   const doFitAndScroll = () => {
+    fitCallCount++;
+    blackbox.log('fit', 'doFitAndScroll', {
+      callNum: fitCallCount,
+      activeTabId: terminalStore.activeTabId,
+      innerH: window.innerHeight,
+      vvHeight: window.visualViewport?.height,
+    });
     terminalStore.fitActiveTab();
     terminalStore.scrollActiveTabToBottom();
   };
 
+  // [debug-loop] fix v11: Continuous RAF-based viewport adjustment.
+  //
+  // Root cause of previous failures: when navigating back from file manager
+  // with keyboard open, the retry interval (5×200ms=1s) captured
+  // visualViewport.height during the keyboard animation (e.g., 753→600→464)
+  // and applied a wrong intermediate value. After retry ended, no further
+  // adjustments were made.
+  //
+  // New approach:
+  // 1. Use requestAnimationFrame for continuous adjustment (matches browser paint cycle)
+  // 2. Use window.innerHeight (not vv.height) — on Android, innerHeight SHRINKS
+  //    when keyboard opens (753→464), matching the visible area exactly.
+  //    No dependency on vv.offsetTop which may be stale during animation.
+  // 3. Auto-stop when values stabilize (5 consecutive stable frames) OR after 5 seconds
+  // 4. visualViewport events still trigger immediate handler for manual keyboard toggle
+  const applyViewport = () => {
+    const vv = window.visualViewport;
+    // On Android: innerHeight shrinks when keyboard opens (equals vv.height)
+    // On iOS: innerHeight stays constant; vv.height reflects keyboard reduction
+    // Use the smaller of innerHeight and vv.height to handle both cases
+    const vvHeight = vv?.height ?? window.innerHeight;
+    const effectiveHeight = Math.min(window.innerHeight, vvHeight);
+    const vvOffsetTop = vv?.offsetTop ?? 0;
+
+    // Skip if nothing changed (prevents unnecessary layout thrashing)
+    const lastTop = parseInt(terminalPage.style.top) || 0;
+    const lastHeight = parseInt(terminalPage.style.height) || 0;
+    const topChanged = Math.abs(vvOffsetTop - lastTop) > 1;
+    const heightChanged = Math.abs(effectiveHeight - lastHeight) > 1;
+
+    if (topChanged || heightChanged) {
+      terminalPage.style.top = `${vvOffsetTop}px`;
+      terminalPage.style.height = `${effectiveHeight}px`;
+      void terminalPage.offsetHeight; // force reflow
+      doFitAndScroll();
+    } else if (stableCount === 0) {
+      // First frame: always fit to ensure correct initial state
+      doFitAndScroll();
+    }
+    // When stable and unchanged: skip fit entirely (prevents stutter)
+
+    console.log('[TerminalView][raf] top:', vvOffsetTop,
+      'height:', effectiveHeight,
+      'innerH:', window.innerHeight,
+      'vv.height:', vvHeight);
+    blackbox.log('raf', 'applyViewport', {
+      top: vvOffsetTop, height: effectiveHeight,
+      innerH: window.innerHeight, vvHeight,
+      stableCount, elapsed: Date.now() - adjustStartTime,
+    });
+
+    // Auto-stop: compare with previously applied values
+    if (effectiveHeight === lastAppliedHeight) {
+      stableCount++;
+    } else {
+      stableCount = 0;
+    }
+    lastAppliedHeight = effectiveHeight;
+
+    const elapsed = Date.now() - adjustStartTime;
+    // Stop after 10 consecutive stable frames OR after 5 seconds max
+    if (stableCount >= 10 || elapsed > 5000) {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      console.log('[TerminalView][raf] stopped. stable count:', stableCount, 'elapsed:', elapsed, 'final height:', effectiveHeight);
+      blackbox.log('raf', 'stopped', {
+        stableCount, elapsed, finalHeight: effectiveHeight,
+      });
+    }
+  };
+
+  const startContinuousAdjust = () => {
+    stableCount = 0;
+    lastAppliedHeight = 0; // Reset so first frame doesn't count as "stable"
+    adjustStartTime = Date.now();
+    const loop = () => {
+      applyViewport();
+      const elapsed = Date.now() - adjustStartTime;
+      if (stableCount < 10 && elapsed <= 5000) {
+        rafId = requestAnimationFrame(loop);
+      }
+    };
+    if (rafId !== null) cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(loop);
+  };
+
   const handleViewportChange = () => {
-    // Debounce rapid resize events
     if (resizeTimeout !== null) {
       clearTimeout(resizeTimeout);
     }
 
     resizeTimeout = window.setTimeout(() => {
       resizeTimeout = null;
-
-      const viewportHeight = window.visualViewport?.height || window.innerHeight;
-      const keyboardHeight = window.innerHeight - viewportHeight;
-
-      // Adjust bottom position to account for keyboard
-      // This makes the terminal shrink instead of being pushed up
-      terminalPage.style.bottom = `${keyboardHeight}px`;
-
-      // [debug-loop] fix: single debounced fit instead of 3 redundant setTimeout calls.
-      // Multiple fit() calls cause PSReadLine to re-render multiple times, corrupting
-      // the display at line wrap points (characters dropped at wrap boundary).
-      // TerminalTab's own viewport handler (100ms debounce) handles subsequent adjustments.
-      setTimeout(doFitAndScroll, 100);
+      applyViewport();
+      // Restart continuous adjustment when viewport changes
+      // (keyboard open/close, address bar collapse)
+      startContinuousAdjust();
     }, 20);
   };
 
   window.visualViewport?.addEventListener('resize', handleViewportChange);
   window.visualViewport?.addEventListener('scroll', handleViewportChange);
+  // Backup for Android browsers that may not fire visualViewport events reliably
+  window.addEventListener('resize', handleViewportChange);
 
-  // Initial setup
-  handleViewportChange();
+  // Start continuous adjustment on mount
+  startContinuousAdjust();
 
   // Return cleanup function
   return () => {
     if (resizeTimeout !== null) {
       clearTimeout(resizeTimeout);
     }
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+    }
     window.visualViewport?.removeEventListener('resize', handleViewportChange);
     window.visualViewport?.removeEventListener('scroll', handleViewportChange);
+    window.removeEventListener('resize', handleViewportChange);
   };
 }
 
@@ -286,6 +464,15 @@ let sessionRestored = false;
 let cleanupViewportHandling: (() => void) | null = null;
 
 onMounted(() => {
+  // Reset fit counter for this mount cycle
+  fitCallCount = 0;
+  blackbox.log('navigation', 'TerminalView:mounted', {
+    innerH: window.innerHeight,
+    vvHeight: window.visualViewport?.height,
+    vvOffsetTop: window.visualViewport?.offsetTop,
+    tabsCount: terminalStore.tabs.length,
+    activeTabId: terminalStore.activeTabId,
+  });
   // Initialize user-specific data (history, shortcuts)
   if (authStore.username) {
     terminalStore.initUserData(authStore.username);
@@ -301,6 +488,79 @@ onMounted(() => {
   intervalId = window.setInterval(loadAgents, 5000);
   // Setup visual viewport handling for mobile keyboard
   cleanupViewportHandling = setupVisualViewportHandling();
+
+  // Debug panel: update metrics every 200ms (only when visible)
+  if (showDebugPanel.value) {
+  debugInterval = window.setInterval(() => {
+    const vv = window.visualViewport;
+    const innerHeight = window.innerHeight;
+    const vvHeight = vv?.height ?? 0;
+    const vvOffsetTop = vv?.offsetTop ?? 0;
+    const keyboardHeight = Math.max(0, innerHeight - vvHeight);
+
+    const page = terminalPageRef.value;
+    const container = page?.querySelector('.terminal-container') as HTMLElement | null;
+
+    // Get xterm dimensions from the VISIBLE terminal (active tab)
+    let xtermCols = 0;
+    let xtermRows = 0;
+    let wrapperRectH = 0;
+    let wrapperRectW = 0;
+    // Find the visible .terminal-wrapper (the one without display:none)
+    const wrappers = document.querySelectorAll('.terminal-wrapper');
+    for (const wrapper of wrappers) {
+      if ((wrapper as HTMLElement).style.display !== 'none') {
+        const wRect = wrapper.getBoundingClientRect();
+        wrapperRectH = Math.round(wRect.height);
+        wrapperRectW = Math.round(wRect.width);
+        const xtermEl = wrapper.querySelector('.terminal') as any;
+        if (xtermEl?.__xterm) {
+          xtermCols = xtermEl.__xterm.cols;
+          xtermRows = xtermEl.__xterm.rows;
+        }
+        break;
+      }
+    }
+
+    // Count registered fitters (to check if active tab has a fitter)
+    const fitterCount = terminalStore.tabs.length; // Each tab registers a fitter when initialized
+
+    // Read safeFit stats from TerminalTab (exposed via window)
+    const sf = (window as any).__safeFitStats || {};
+
+    debugInfo.value = {
+      innerHeight,
+      vvHeight,
+      vvOffsetTop,
+      keyboardHeight,
+      pageTop: page?.style.top ?? '',
+      pageHeight: page?.style.height ?? '',
+      pageBottom: page?.style.bottom ?? '',
+      containerHeight: container ? Math.round(container.getBoundingClientRect().height) : 0,
+      xtermCols,
+      xtermRows,
+      // Actual rendered position of terminal-page
+      pageRectTop: page ? Math.round(page.getBoundingClientRect().top) : -1,
+      pageRectBottom: page ? Math.round(page.getBoundingClientRect().bottom) : -1,
+      pageRectHeight: page ? Math.round(page.getBoundingClientRect().height) : -1,
+      // New: observe "content shift down" mechanism
+      fitCount: fitCallCount,
+      wrapperRectH,
+      wrapperRectW,
+      activeTabId: terminalStore.activeTabId || '',
+      fitterCount,
+      sfCalls: sf.calls || 0,
+      sfSkipped: sf.skipped || 0,
+      sfFitted: sf.fitted || 0,
+      sfLastRectH: sf.lastRectH || 0,
+      sfLastRows: sf.lastRows || 0,
+      sfReason: sf.reason || '',
+      // Blackbox
+      bbCount: blackbox.count(),
+      bbRecent: blackbox.recent(5),
+    };
+  }, 200);
+  } // end if (showDebugPanel)
 });
 
 // Restore all sessions from storage
@@ -333,7 +593,12 @@ function restoreLastSession() {
 }
 
 onUnmounted(() => {
+  blackbox.log('navigation', 'TerminalView:unmounted', {
+    fitCallCount,
+    tabsCount: terminalStore.tabs.length,
+  });
   if (intervalId) clearInterval(intervalId);
+  if (debugInterval) clearInterval(debugInterval);
   if (cleanupViewportHandling) cleanupViewportHandling();
 });
 
@@ -537,6 +802,49 @@ function deleteShortcutHandler(id: string) {
   }
 }
 
+// Export blackbox data to clipboard AND auto-send to server
+async function copyBlackbox() {
+  const data = blackbox.exportJSON();
+  const label = `bug-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}`;
+
+  // Auto-send to server
+  try {
+    const apiUrl = settingsStore.settings.apiUrl;
+    const response = await fetch(`${apiUrl}/api/blackbox/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        events: blackbox.export().events,
+        startTime: blackbox.export().startTime,
+        label,
+      }),
+    });
+    const result = await response.json();
+    alert(`✅ 黑匣子已上报服务器！\nID: ${result.id}\n事件数: ${result.eventCount}\n\n（我也复制到了剪贴板）`);
+  } catch (err) {
+    alert(`❌ 上报失败: ${(err as Error).message}\n数据已复制到剪贴板，请手动发送`);
+  }
+
+  // Also copy to clipboard
+  if (navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(data);
+    } catch { /* ignore */ }
+  }
+}
+
+// Format blackbox event data for display
+function formatBbData(data: Record<string, unknown>): string {
+  if (!data) return '';
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined && value !== null && value !== '') {
+      parts.push(`${key}=${typeof value === 'object' ? JSON.stringify(value) : value}`);
+    }
+  }
+  return parts.join(' ');
+}
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
   // Track user activity for session timeout
@@ -559,10 +867,18 @@ onUnmounted(() => {
   top: 0;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* bottom is controlled by JS via style.height to adapt to visual viewport.
+   * Do NOT set bottom: 0 here — it conflicts with JS-set height on some Android browsers,
+   * causing height to be ignored and element to stretch from top to bottom. */
   display: flex;
   flex-direction: column;
   background: var(--bg-page);
+  /* [debug-loop] fix: Allow flex children to shrink below content size.
+   * Without this, flex items use min-height: auto which prevents shrinking
+   * below their content. This causes terminal-container to overflow when
+   * the page height is reduced by the keyboard. */
+  min-height: 0;
+  overflow: hidden;
 }
 
 .topbar {
@@ -919,6 +1235,13 @@ onUnmounted(() => {
   position: relative;
   overflow: hidden;
   background: var(--bg-root);
+  /* [debug-loop] fix: Critical for keyboard adaptation.
+   * flex:1 elements default to min-height: auto, which prevents them from
+   * shrinking below their content size. When keyboard opens and page height
+   * shrinks from 753px to 464px, the container must shrink too.
+   * Without min-height:0, the container stays at its content height (e.g., 582px)
+   * even though the parent page is only 464px, causing content to overflow. */
+  min-height: 0;
 }
 
 .empty-state {
@@ -1330,5 +1653,82 @@ onUnmounted(() => {
   gap: var(--space-2);
   padding: var(--space-4);
   opacity: 0.6;
+}
+
+/* Debug panel */
+.debug-panel {
+  position: fixed;
+  top: 48px;
+  right: 4px;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.85);
+  color: #0f0;
+  font-family: monospace;
+  font-size: 10px;
+  line-height: 1.3;
+  border-radius: 6px;
+  min-width: 170px;
+  max-width: 200px;
+  pointer-events: auto;
+  border: 1px solid rgba(0, 255, 0, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+.debug-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  cursor: pointer;
+  background: rgba(0, 255, 0, 0.1);
+  border-radius: 6px 6px 0 0;
+  font-weight: bold;
+}
+.debug-actions {
+  display: flex;
+  gap: 4px;
+}
+.debug-export {
+  background: rgba(100, 200, 255, 0.3);
+  border: 1px solid #6cf;
+  color: #6cf;
+  font-size: 11px;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  min-height: 28px;
+}
+.debug-export:active {
+  background: rgba(100, 200, 255, 0.6);
+}
+.debug-close {
+  background: none;
+  border: none;
+  color: #f66;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.debug-body {
+  padding: 4px 8px;
+}
+.debug-body div {
+  white-space: nowrap;
+}
+.debug-separator {
+  color: #ff0 !important;
+  text-align: center;
+  margin: 2px 0;
+  font-size: 9px;
+}
+.debug-bb-event {
+  color: #aaf !important;
+  font-size: 9px;
+  border-bottom: 1px solid rgba(100, 100, 255, 0.2);
+  padding: 1px 0;
+}
+.debug-bb-data {
+  color: #888 !important;
+  font-size: 8px;
 }
 </style>

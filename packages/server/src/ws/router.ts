@@ -142,7 +142,12 @@ export function handleMessage(ws: WebSocket, message: any, isAgent: boolean) {
     case 'file:validate':
       // Browser requests path validation
       console.log(`[file] file:validate received, sessionId: ${sessionId}, payload:`, payload);
-      if (sessionId) {
+      {
+        // [pdf-fix] If payload has agentId, bind browser to agent (same as file:download)
+        if (payload?.agentId) {
+          const bindResult = tunnelManager.bindBrowserToAgent(ws, payload.agentId);
+          console.log(`[file] bindBrowserToAgent for validate result:`, bindResult);
+        }
         const browser = tunnelManager.getBrowser(ws);
         console.log(`[file] browser for validate:`, browser ? { agentId: browser.agentId, userId: browser.userId } : null);
         if (browser?.agentId) {

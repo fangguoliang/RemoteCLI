@@ -127,6 +127,8 @@ function confirmRename() {
     const payload = data as { success: boolean; error?: string };
     if (payload.success) {
       emit('refresh');
+    } else {
+      alert(payload.error || 'Rename failed');
     }
     fileWebSocket.off('file:rename:result', handler);
   };
@@ -140,6 +142,8 @@ function confirmDelete() {
     const payload = data as { success: boolean; error?: string };
     if (payload.success) {
       emit('refresh');
+    } else {
+      alert(payload.error || 'Delete failed');
     }
     fileWebSocket.off('file:delete:result', handler);
   };

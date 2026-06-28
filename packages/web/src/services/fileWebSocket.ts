@@ -1,6 +1,7 @@
 import type { FileListPayload, FileProgressPayload, FileDataPayload, FileUploadedPayload, FileErrorPayload, FileValidatedPayload } from '@remotecli/shared';
 import { useFileStore } from '@/stores/file';
 import { useAuthStore } from '@/stores/auth';
+import { blackbox } from '@/utils/eventLogger';
 
 type MessageHandler = (data: unknown) => void;
 
@@ -9,12 +10,39 @@ class FileWebSocketService {
   private messageHandlers = new Map<string, MessageHandler[]>();
   private transferChunks = new Map<string, { chunks: Map<number, string>; totalChunks: number; totalSize: number }>();
   private viewingPath: string | null = null;
+  private viewingRequested = new Set<string>(); // track all viewing download requests
+  private regularDownloadRequested = new Set<string>(); // track paths requested for regular download
   private currentAgentId: string | null = null;
   private viewContentHandlers: ((path: string, content: string) => void)[] = [];
+  private viewErrorHandlers: ((path: string, error: string) => void)[] = [];
+
+  /**
+   * Set the active agent ID for routing file operations.
+   * Must be called before any file:download/file:validate operations.
+   */
+  public setAgentId(agentId: string | null) {
+    this.currentAgentId = agentId;
+    blackbox.log('ws', 'filews:set-agent', { agentId });
+  }
 
   connect(url: string, agentId?: string): Promise<void> {
+    // [pdf-fix] Close old WebSocket before creating new one.
+    // Without this, navigating Terminal→Files repeatedly creates stale connections
+    // that the server still thinks are active, causing duplicate chunk delivery.
+    if (this.ws) {
+      blackbox.log('ws', 'filews:closing-stale', { readyState: this.ws.readyState });
+      const oldWs = this.ws;
+      // Clear old handlers to prevent them from affecting new connection
+      oldWs.onopen = null;
+      oldWs.onerror = null;
+      oldWs.onmessage = null;
+      oldWs.onclose = null;
+      try { oldWs.close(); } catch { /* ignore */ }
+      this.ws = null;
+    }
     return new Promise((resolve, reject) => {
       console.log('[fileWebSocket] Connecting to URL:', url, 'agentId:', agentId);
+      blackbox.log('ws', 'filews:connecting', { url, agentId });
       this.currentAgentId = agentId || null;
       const ws = new WebSocket(url);
       this.ws = ws;
@@ -22,8 +50,10 @@ class FileWebSocketService {
 
       ws.onopen = () => {
         console.log('[fileWebSocket] WebSocket OPENED, readyState:', ws.readyState);
+        blackbox.log('ws', 'filews:opened', { readyState: ws.readyState });
         const authStore = useAuthStore();
         console.log('[fileWebSocket] Sending auth with userId:', authStore.userId, 'agentId:', this.currentAgentId);
+        blackbox.log('ws', 'filews:auth-sending', { userId: authStore.userId, agentId: this.currentAgentId });
         this.send({
           type: 'auth',
           payload: { userId: authStore.userId, agentId: this.currentAgentId },
@@ -31,19 +61,34 @@ class FileWebSocketService {
         });
       };
 
-      this.ws.onerror = (err) => {
+      ws.onerror = (err) => {
         console.error('[fileWebSocket] WebSocket error:', err);
+        blackbox.log('error', 'filews:error', { error: String(err) });
         reject(err);
       };
 
-      this.ws.onmessage = (event) => {
+      ws.onmessage = (event) => {
         try {
+          const rawSize = typeof event.data === 'string' ? event.data.length : 0;
           const message = JSON.parse(event.data);
+          // [pdf-debug] Log file:data messages with size info
+          if (message.type === 'file:data') {
+            blackbox.log('pdf', 'ws:raw-message', {
+              type: 'file:data',
+              rawSize,
+              chunkIndex: message.payload?.chunkIndex,
+              totalChunks: message.payload?.totalChunks,
+              contentLen: message.payload?.content?.length ?? 0,
+              path: message.payload?.path,
+            });
+          }
           console.log('[fileWebSocket] Received message:', message.type, message);
           // Handle auth:result
           if (message.type === 'auth:result') {
             console.log('[fileWebSocket] Auth result:', message.payload);
+            blackbox.log('ws', 'filews:auth-result', { success: message.payload?.success, error: message.payload?.error });
             if (message.payload?.success) {
+              blackbox.log('ws', 'filews:connected', {});
               resolve();
             } else {
               reject(new Error(message.payload?.error || 'Auth failed'));
@@ -56,8 +101,11 @@ class FileWebSocketService {
         }
       };
 
-      this.ws.onclose = () => {
+      ws.onclose = () => {
+        // [pdf-fix] Only clean up if this is still the active WebSocket
+        if (this.ws !== ws) return;
         console.log('[fileWebSocket] WebSocket closed');
+        blackbox.log('ws', 'filews:closed', {});
         // Clean up connection state
         this.ws = null;
         // Clean up viewing state
@@ -68,6 +116,11 @@ class FileWebSocketService {
             this.transferChunks.delete(key);
           }
         }
+        // Clean up view handlers (no auto-reconnect, so they'd never fire)
+        this.viewContentHandlers = [];
+        this.viewErrorHandlers = [];
+        this.viewingRequested.clear();
+        this.regularDownloadRequested.clear();
       };
     });
   }
@@ -149,12 +202,40 @@ class FileWebSocketService {
     const normalizedPayloadPath = payload.path.replace(/\\/g, '/');
 
     console.log('[fileWebSocket] handleFileData: payload.path=', payload.path, 'viewingPath=', this.viewingPath);
+    blackbox.log('pdf', 'ws:file-data', {
+      payloadPath: payload.path,
+      viewingPath: this.viewingPath,
+      chunkIndex: payload.chunkIndex,
+      totalChunks: payload.totalChunks,
+      contentLen: payload.content?.length ?? 0,
+      viewingRequested: Array.from(this.viewingRequested),
+      regularDownloadRequested: Array.from(this.regularDownloadRequested),
+    });
 
     // Check if this is a "for viewing" download
     if (normalizedViewingPath && normalizedViewingPath === normalizedPayloadPath) {
+      blackbox.log('pdf', 'ws:file-data-branch', { branch: 'viewing', chunkIndex: payload.chunkIndex });
       this.assembleViewContent(payload);
       return;
     }
+
+    // If this path was requested for viewing but has been superseded, discard it
+    // (prevents stale viewing downloads from triggering unexpected file downloads)
+    if (this.viewingRequested.has(normalizedPayloadPath)) {
+      blackbox.log('pdf', 'ws:file-data-branch', { branch: 'discarded-superseded', chunkIndex: payload.chunkIndex });
+      this.viewingRequested.delete(normalizedPayloadPath);
+      return;
+    }
+
+    // Only proceed with regular download if this path was explicitly requested
+    // (prevents orphaned chunks from triggering unexpected browser downloads)
+    if (!this.regularDownloadRequested.has(normalizedPayloadPath)) {
+      blackbox.log('pdf', 'ws:file-data-branch', { branch: 'discarded-unrequested', chunkIndex: payload.chunkIndex });
+      console.log('[fileWebSocket] handleFileData: discarding unrequested data for', payload.path);
+      return;
+    }
+
+    blackbox.log('pdf', 'ws:file-data-branch', { branch: 'regular-download', chunkIndex: payload.chunkIndex });
 
     // Regular download
     const transferId = payload.path;
@@ -244,6 +325,9 @@ class FileWebSocketService {
       // 更新状态
       store.updateTransfer(transferId, { status: 'completed', percent: 100 });
 
+      // Clean up tracking
+      this.regularDownloadRequested.delete(filePath.replace(/\\/g, '/'));
+
       // 2秒后移除
       setTimeout(() => {
         store.removeTransfer(transferId);
@@ -264,12 +348,37 @@ class FileWebSocketService {
     return bytes;
   }
 
+  // 将 Uint8Array 转换为 Base64 字符串（分块避免调用栈溢出）
+  private uint8ArrayToBase64(bytes: Uint8Array): string {
+    const chunkSize = 8192;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+      binary += String.fromCharCode.apply(null, Array.from(chunk));
+    }
+    return btoa(binary);
+  }
+
   private assembleViewContent(payload: FileDataPayload) {
     const store = useFileStore();
     const viewId = 'viewer-' + payload.path;
 
+    blackbox.log('pdf', 'ws:assemble-start', {
+      path: payload.path,
+      chunkIndex: payload.chunkIndex,
+      totalChunks: payload.totalChunks,
+      contentLen: payload.content?.length ?? 0,
+    });
+
     // Initialize chunks on first chunk
     if (payload.chunkIndex === 0) {
+      if (this.transferChunks.has(viewId)) {
+        blackbox.log('pdf', 'ws:assemble-reinit', {
+          viewId,
+          reason: 'chunk-0-again',
+          existingChunks: this.transferChunks.get(viewId)?.chunks.size ?? 0,
+        });
+      }
       this.transferChunks.set(viewId, {
         chunks: new Map(),
         totalChunks: payload.totalChunks,
@@ -281,6 +390,12 @@ class FileWebSocketService {
     const transfer = this.transferChunks.get(viewId);
     if (transfer) {
       transfer.chunks.set(payload.chunkIndex, payload.content);
+      blackbox.log('pdf', 'ws:assemble-chunk-stored', {
+        chunkIndex: payload.chunkIndex,
+        mapSize: transfer.chunks.size,
+        totalChunks: transfer.totalChunks,
+        keys: Array.from(transfer.chunks.keys()),
+      });
 
       // All chunks received
       if (transfer.chunks.size === transfer.totalChunks) {
@@ -300,24 +415,40 @@ class FileWebSocketService {
           }
         }
 
-        // Detect encoding from BOM and decode accordingly
+        // Determine if binary file (needs base64) or text file (needs UTF-8 decode)
+        const fileName = payload.path.split(/[/\\]/).pop() || '';
+        const ext = fileName.split('.').pop()?.toLowerCase() || '';
+        const isBinaryType = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'pdf'].includes(ext);
+
         let content: string;
-        if (allBytes.length >= 2 && allBytes[0] === 0xff && allBytes[1] === 0xfe) {
-          // UTF-16LE BOM
-          content = new TextDecoder('utf-16le').decode(allBytes.subarray(2));
-        } else if (allBytes.length >= 2 && allBytes[0] === 0xfe && allBytes[1] === 0xff) {
-          // UTF-16BE BOM
-          content = new TextDecoder('utf-16be').decode(allBytes.subarray(2));
-        } else if (allBytes.length >= 3 && allBytes[0] === 0xef && allBytes[1] === 0xbb && allBytes[2] === 0xbf) {
-          // UTF-8 BOM
-          content = new TextDecoder('utf-8').decode(allBytes.subarray(3));
+        if (isBinaryType) {
+          // Keep as base64 for binary types (images, PDF)
+          content = this.uint8ArrayToBase64(allBytes);
         } else {
-          // Default: UTF-8 (no BOM)
-          content = new TextDecoder('utf-8').decode(allBytes);
+          // Detect encoding from BOM and decode accordingly
+          if (allBytes.length >= 2 && allBytes[0] === 0xff && allBytes[1] === 0xfe) {
+            // UTF-16LE BOM
+            content = new TextDecoder('utf-16le').decode(allBytes.subarray(2));
+          } else if (allBytes.length >= 2 && allBytes[0] === 0xfe && allBytes[1] === 0xff) {
+            // UTF-16BE BOM
+            content = new TextDecoder('utf-16be').decode(allBytes.subarray(2));
+          } else if (allBytes.length >= 3 && allBytes[0] === 0xef && allBytes[1] === 0xbb && allBytes[2] === 0xbf) {
+            // UTF-8 BOM
+            content = new TextDecoder('utf-8').decode(allBytes.subarray(3));
+          } else {
+            // Default: UTF-8 (no BOM)
+            content = new TextDecoder('utf-8').decode(allBytes);
+          }
         }
 
         // Store content and show viewer
         console.log('[fileWebSocket] viewer showing file:', payload.path, 'content length:', content.length);
+        blackbox.log('pdf', 'ws:assemble-complete', {
+          path: payload.path,
+          contentLen: content.length,
+          isBinary: isBinaryType,
+          totalSize: transfer.totalSize,
+        });
         store.setViewerContent(content);
         store.setViewerLoading(false);
         store.setViewerVisible(true);
@@ -329,6 +460,7 @@ class FileWebSocketService {
         // Cleanup
         this.transferChunks.delete(viewId);
         this.viewingPath = null;
+        this.viewingRequested.delete(payload.path.replace(/\\/g, '/'));
       }
     }
   }
@@ -387,12 +519,16 @@ class FileWebSocketService {
 
     // Handle viewing download error
     if (payload.path && this.viewingPath === payload.path) {
+      const errorPath = payload.path;
       store.setViewerLoading(false);
       store.setValidatingPath(null);
       this.viewingPath = null;
+      this.viewingRequested.delete(errorPath.replace(/\\/g, '/'));
       // Clean up viewer chunks
-      const viewId = 'viewer-' + payload.path;
+      const viewId = 'viewer-' + errorPath;
       this.transferChunks.delete(viewId);
+      // Notify error handlers so overlay can stop loading
+      this.viewErrorHandlers.forEach(h => h(errorPath, payload.message));
     }
 
     // 更新相关传输状态
@@ -438,6 +574,12 @@ class FileWebSocketService {
   download(path: string) {
     const store = useFileStore();
     const fileName = path.split(/[/\\]/).pop() || 'file';
+    const normalizedPath = path.replace(/\\/g, '/');
+
+    blackbox.log('ws', 'filews:download', { path, agentId: this.currentAgentId });
+
+    // Track this as an expected regular download
+    this.regularDownloadRequested.add(normalizedPath);
 
     store.addTransfer({
       id: path,
@@ -450,7 +592,7 @@ class FileWebSocketService {
 
     this.send({
       type: 'file:download',
-      payload: { path },
+      payload: { path, agentId: this.currentAgentId },
       timestamp: Date.now(),
     });
   }
@@ -506,6 +648,14 @@ class FileWebSocketService {
   }
 
   createFile(dirPath: string, fileName: string, agentId: string) {
+    if (!this.isConnected()) {
+      // Emit error result asynchronously so callers' handlers still work
+      queueMicrotask(() => {
+        const handlers = this.messageHandlers.get('file:create:result') || [];
+        handlers.forEach(h => h({ success: false, error: 'Not connected' }));
+      });
+      return;
+    }
     this.send({
       type: 'file:create',
       payload: { dirPath, name: fileName, agentId },
@@ -514,6 +664,13 @@ class FileWebSocketService {
   }
 
   renameFile(oldPath: string, newName: string) {
+    if (!this.isConnected()) {
+      queueMicrotask(() => {
+        const handlers = this.messageHandlers.get('file:rename:result') || [];
+        handlers.forEach(h => h({ success: false, error: 'Not connected' }));
+      });
+      return;
+    }
     this.send({
       type: 'file:rename',
       payload: { oldPath, newName },
@@ -522,6 +679,13 @@ class FileWebSocketService {
   }
 
   deleteFile(path: string, isDirectory: boolean) {
+    if (!this.isConnected()) {
+      queueMicrotask(() => {
+        const handlers = this.messageHandlers.get('file:delete:result') || [];
+        handlers.forEach(h => h({ success: false, error: 'Not connected' }));
+      });
+      return;
+    }
     this.send({
       type: 'file:delete',
       payload: { path, isDirectory },
@@ -538,13 +702,22 @@ class FileWebSocketService {
     if (idx !== -1) this.viewContentHandlers.splice(idx, 1);
   }
 
+  onViewError(handler: (path: string, error: string) => void) {
+    this.viewErrorHandlers.push(handler);
+  }
+
+  offViewError(handler: (path: string, error: string) => void) {
+    const idx = this.viewErrorHandlers.indexOf(handler);
+    if (idx !== -1) this.viewErrorHandlers.splice(idx, 1);
+  }
+
   // Check actual connection state before validating
   private isActuallyConnected(): boolean {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
   }
 
   validatePath(path: string, sessionId: string) {
-    console.log('[fileWebSocket] validatePath:', path, 'sessionId:', sessionId, 'ws state:', this.ws?.readyState);
+    console.log('[fileWebSocket] validatePath:', path, 'sessionId:', sessionId, 'agentId:', this.currentAgentId, 'ws state:', this.ws?.readyState);
 
     // Always check actual state
     if (!this.isActuallyConnected()) {
@@ -554,9 +727,11 @@ class FileWebSocketService {
       return;
     }
 
+    blackbox.log('ws', 'filews:validate', { path, sessionId, agentId: this.currentAgentId });
+
     const msg = {
       type: 'file:validate',
-      payload: { path },
+      payload: { path, agentId: this.currentAgentId },
       sessionId,
       timestamp: Date.now(),
     };
@@ -571,7 +746,8 @@ class FileWebSocketService {
   }
 
   downloadForView(path: string) {
-    console.log('[fileWebSocket] downloadForView:', path);
+    console.log('[fileWebSocket] downloadForView:', path, 'agentId:', this.currentAgentId);
+    blackbox.log('pdf', 'ws:download-for-view', { path, agentId: this.currentAgentId });
     const store = useFileStore();
 
     // Set loading state
@@ -580,10 +756,11 @@ class FileWebSocketService {
 
     // Mark this as a "for viewing" download
     this.viewingPath = path;
+    this.viewingRequested.add(path);
 
     this.send({
       type: 'file:download',
-      payload: { path },
+      payload: { path, agentId: this.currentAgentId },
       timestamp: Date.now(),
     });
   }
@@ -594,6 +771,24 @@ class FileWebSocketService {
 
   public isConnected(): boolean {
     return this.isActuallyConnected();
+  }
+
+  /**
+   * Cancel any pending viewing downloads.
+   * Called when the file overlay/viewer is closed to prevent orphaned
+   * file:data chunks from triggering unexpected browser downloads.
+   */
+  public cancelViewing() {
+    this.viewingPath = null;
+    this.viewingRequested.clear();
+    this.viewContentHandlers = [];
+    this.viewErrorHandlers = [];
+    // Clean up viewer-specific transfer chunks
+    for (const key of this.transferChunks.keys()) {
+      if (key.startsWith('viewer-')) {
+        this.transferChunks.delete(key);
+      }
+    }
   }
 
   public getWsState(): number | null {

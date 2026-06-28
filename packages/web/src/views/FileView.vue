@@ -88,18 +88,17 @@
 
     <!-- Action Bar -->
     <div class="action-bar" v-if="selectedAgentId">
-      <input
-        ref="pathInput"
-        type="text"
-        class="path-input"
-        v-model="gotoPath"
-        placeholder="D: or path..."
-        @keyup.enter="goToPath"
-      />
-      <button class="icon-btn new-btn" @click="showCreateModal = true" title="New file" aria-label="New file">
-        <span style="font-size: 18px;">+</span>
-      </button>
-      <button class="action-btn" @click="goToPath" aria-label="跳转到路径">Go</button>
+      <div class="path-go-group">
+        <input
+          ref="pathInput"
+          type="text"
+          class="path-input"
+          v-model="gotoPath"
+          placeholder="D: or path..."
+          @keyup.enter="goToPath"
+        />
+        <button class="action-btn go-btn" @click="goToPath" aria-label="跳转到路径">Go</button>
+      </div>
       <button class="icon-btn" @click="triggerUpload" title="上传" aria-label="上传文件">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
       </button>
@@ -108,6 +107,9 @@
       </button>
       <button class="icon-btn save-icon-btn" @click="openSaveModal" :disabled="!currentPath" title="保存快捷方式" aria-label="保存为快捷方式">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      </button>
+      <button class="icon-btn new-btn" @click="showCreateModal = true" title="New file" aria-label="New file">
+        <span style="font-size: 18px;">+</span>
       </button>
     </div>
 
@@ -184,9 +186,37 @@ import ContextMenu from '@/components/ContextMenu.vue';
 import { useFileShortcutsStore } from '@/stores/fileShortcuts';
 import { getFileType, isEditable } from '@/utils/fileType';
 import type { FileEntry } from '@remotecli/shared';
+import { blackbox } from '@/utils/eventLogger';
 
 const router = useRouter();
 const fileStore = useFileStore();
+
+// [swipe-nav-fix] Push a dummy history state when on FileView to trap browser swipe-back.
+// When swipe-back triggers popstate, navigate to /terminal instead of actual browser back.
+let fileViewHistoryPushed = false;
+
+function onPopStateGoTerminal() {
+  // If an overlay (FileOverlay/MarkdownViewer) already handled this swipe-back, skip
+  if ((window as any).__swipeBackHandled) return;
+  if (fileViewHistoryPushed) {
+    fileViewHistoryPushed = false;
+    router.go(-1);
+  }
+}
+
+window.addEventListener('popstate', onPopStateGoTerminal);
+
+// Push dummy state on mount
+onMounted(() => {
+  if (!fileViewHistoryPushed) {
+    history.pushState({ fileView: true }, '');
+    fileViewHistoryPushed = true;
+  }
+});
+
+onUnmounted(() => {
+  window.removeEventListener('popstate', onPopStateGoTerminal);
+});
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
@@ -228,10 +258,23 @@ function closeCreateModal() {
 }
 
 function handleCreateFile() {
-  if (!newFileName.value.trim() || !currentPath.value || !selectedAgentId.value) return;
   createError.value = '';
 
-  fileWebSocket.createFile(currentPath.value, newFileName.value.trim(), selectedAgentId.value);
+  if (!selectedAgentId.value) {
+    createError.value = 'No agent selected';
+    return;
+  }
+  if (!currentPath.value) {
+    createError.value = 'No directory selected';
+    return;
+  }
+  if (!newFileName.value.trim()) {
+    createError.value = 'Please enter a filename';
+    return;
+  }
+
+  const fileName = newFileName.value.trim();
+  fileWebSocket.createFile(currentPath.value, fileName, selectedAgentId.value);
 
   const handler = (data: unknown) => {
     const payload = data as { success: boolean; error?: string; path?: string };
@@ -239,7 +282,7 @@ function handleCreateFile() {
       closeCreateModal();
       refresh();
       // Auto-open for editing if txt/json/md
-      const ext = newFileName.value.split('.').pop()?.toLowerCase();
+      const ext = fileName.split('.').pop()?.toLowerCase();
       if (ext && ['txt', 'json', 'md'].includes(ext) && payload.path) {
         setTimeout(() => {
           const overlay = fileOverlayRef.value?.overlay;
@@ -249,16 +292,30 @@ function handleCreateFile() {
         }, 500);
       }
     } else {
-      createError.value = payload.error || 'Failed to create file';
+      const errMsg = payload.error || 'Failed to create file';
+      if (errMsg.includes('FILE_ALREADY_EXISTS') || errMsg.includes('already exists')) {
+        createError.value = `"${fileName}" already exists`;
+      } else if (errMsg.includes('INVALID_FILENAME')) {
+        createError.value = 'Invalid filename (no special chars like / \\ : * ? " < > |)';
+      } else if (errMsg.includes('PATH_TRAVERSAL')) {
+        createError.value = 'Invalid path';
+      } else {
+        createError.value = errMsg;
+      }
     }
     fileWebSocket.off('file:create:result', handler);
   };
   fileWebSocket.on('file:create:result', handler);
 }
 
-function onPreviewEntry(name: string) {
+async function onPreviewEntry(name: string) {
   const filePath = currentPath.value ? `${currentPath.value}\\${name}` : name;
   const type = getFileType(name);
+  blackbox.log('pdf', 'preview:entry', { name, filePath, type });
+
+  // [pdf-fix] Ensure WebSocket is alive before file operations.
+  // Phone backgrounding can kill the WS without the client knowing.
+  await ensureWebSocket();
 
   if (type === 'other') {
     fileWebSocket.download(filePath);
@@ -266,24 +323,52 @@ function onPreviewEntry(name: string) {
   }
 
   const overlay = fileOverlayRef.value?.overlay;
-  if (!overlay) return;
+  if (!overlay) {
+    blackbox.log('pdf', 'preview:no-overlay-ref', {});
+    return;
+  }
 
-  overlay.loading.value = true;
   overlay.open(filePath, type, '');
+  overlay.loading.value = true;
+  blackbox.log('pdf', 'preview:opened', { filePath, type, loading: overlay.loading.value });
 
   const contentHandler = (path: string, content: string) => {
     const normalizedPath = path.replace(/\//g, '\\');
     const normalizedOverlay = overlay.path.value.replace(/\//g, '\\');
+    blackbox.log('pdf', 'preview:content-handler', {
+      path,
+      overlayPath: overlay.path.value,
+      match: normalizedPath === normalizedOverlay,
+      contentLen: content.length,
+    });
     if (normalizedPath === normalizedOverlay) {
       overlay.content.value = content;
+      // [pdf-fix] Always set loading=false when content arrives.
+      // For PDF, the v-if="iframeSrc" on the iframe element ensures the iframe
+      // only renders AFTER the blob URL is created (which happens in the same tick).
+      // So user sees spinner until content arrives, then blank area briefly,
+      // then the PDF iframe appears.
       overlay.loading.value = false;
       if (!content && isEditable(name)) {
         overlay.setMode('edit');
       }
       fileWebSocket.offViewContent(contentHandler);
+      fileWebSocket.offViewError(errorHandler);
+    }
+  };
+  const errorHandler = (path: string, _error: string) => {
+    const normalizedPath = path.replace(/\//g, '\\');
+    const normalizedOverlay = overlay.path.value.replace(/\//g, '\\');
+    blackbox.log('pdf', 'preview:error-handler', { path, overlayPath: overlay.path.value, error: _error });
+    if (normalizedPath === normalizedOverlay) {
+      overlay.loading.value = false;
+      overlay.content.value = '';
+      fileWebSocket.offViewContent(contentHandler);
+      fileWebSocket.offViewError(errorHandler);
     }
   };
   fileWebSocket.onViewContent(contentHandler);
+  fileWebSocket.onViewError(errorHandler);
   fileWebSocket.downloadForView(filePath);
 }
 
@@ -378,9 +463,23 @@ async function connectWebSocket(): Promise<void> {
 
     await fileWebSocket.connect(wsUrl);
     console.log('File WebSocket connected');
+    blackbox.log('lifecycle', 'fileview:ws-connected', {});
   } catch (e) {
     console.error('Failed to connect file WebSocket:', e);
     fileStore.setError('Failed to connect to file service');
+    blackbox.log('error', 'fileview:ws-connect-failed', { error: String(e) });
+  }
+}
+
+// [pdf-fix] Reconnect file WebSocket if connection died (e.g. phone went to background)
+async function ensureWebSocket(): Promise<void> {
+  if (fileWebSocket.getWsState() !== WebSocket.OPEN) {
+    blackbox.log('lifecycle', 'fileview:ws-reconnecting', { currentState: fileWebSocket.getWsState() });
+    await connectWebSocket();
+    // Re-bind agent if we have one selected
+    if (selectedAgentId.value) {
+      fileWebSocket.setAgentId(selectedAgentId.value);
+    }
   }
 }
 
@@ -396,6 +495,8 @@ function selectAgent(agentId: string): void {
 
   showAgents.value = false;
   selectedAgentId.value = agentId;
+  // [pdf-fix] Sync agentId to fileWebSocket so file:download/file:validate get routed correctly
+  fileWebSocket.setAgentId(agentId);
 
   // Browse home directory
   console.log('[FileView] calling browse with ~ and', agentId);
@@ -413,8 +514,9 @@ function navigateToSegment(index: number): void {
 }
 
 // Browse directory entry
-function onBrowseEntry(name: string): void {
+async function onBrowseEntry(name: string): Promise<void> {
   if (!selectedAgentId.value) return;
+  await ensureWebSocket();
 
   // If it's a drive letter (e.g., "D:"), navigate directly to it
   if (name.match(/^[A-Za-z]:$/)) {
@@ -427,7 +529,8 @@ function onBrowseEntry(name: string): void {
 }
 
 // Download file entry
-function onDownloadEntry(name: string): void {
+async function onDownloadEntry(name: string): Promise<void> {
+  await ensureWebSocket();
   const filePath = currentPath.value ? `${currentPath.value}\\${name}` : name;
   fileWebSocket.download(filePath);
 }
@@ -542,10 +645,54 @@ function handleUploadComplete(dir: string) {
   }
 }
 
+// [debug-blackbox] Prevent browser horizontal swipe navigation on FileView page
+let fileViewTouchStartX = 0;
+let fileViewTouchStartY = 0;
+let fileViewTouchStartTarget: HTMLElement | null = null;
+
+function onFileViewTouchStart(e: Event) {
+  const te = e as TouchEvent;
+  fileViewTouchStartX = te.touches[0].clientX;
+  fileViewTouchStartY = te.touches[0].clientY;
+  fileViewTouchStartTarget = te.target as HTMLElement;
+  blackbox.log('touch', 'fileview:touchstart', {
+    x: fileViewTouchStartX,
+    y: fileViewTouchStartY,
+    target: fileViewTouchStartTarget?.tagName,
+    hasScroll: !!fileViewTouchStartTarget?.closest('.file-list, .path-bar, .modal-body, .dropdown-menu'),
+  });
+}
+
+function onFileViewTouchMove(e: Event) {
+  const te = e as TouchEvent;
+  if (!fileViewTouchStartTarget) return;
+  // Don't interfere with elements that have their own horizontal scroll (path bar, modals)
+  if (fileViewTouchStartTarget.closest('.path-bar, .modal-body, .dropdown-menu')) return;
+  // Don't interfere with interactive elements — preventDefault blocks click events
+  if (fileViewTouchStartTarget.closest('button, a, input, select, textarea, [role="button"]')) return;
+  const dx = Math.abs(te.touches[0].clientX - fileViewTouchStartX);
+  const dy = Math.abs(te.touches[0].clientY - fileViewTouchStartY);
+  // Block horizontal swipes to prevent browser back/forward navigation
+  if (dx > dy && dx > 10) {
+    te.preventDefault();
+    blackbox.log('touch', 'fileview:swipe-blocked', { dx, dy });
+  }
+}
+
 onMounted(async () => {
   const _dbgT0 = performance.now();
   console.log('[FileView][DEBUG] ============ onMounted START ============');
+  blackbox.log('lifecycle', 'fileview:mounted:start', {});
   isInitializing = true;
+
+  // [debug-blackbox] Install swipe prevention on FileView root
+  const fileViewEl = document.querySelector('.file-view');
+  if (fileViewEl) {
+    fileViewEl.addEventListener('touchstart', onFileViewTouchStart, { passive: true, capture: true });
+    fileViewEl.addEventListener('touchmove', onFileViewTouchMove, { passive: false, capture: true });
+    blackbox.log('lifecycle', 'fileview:swipe-prevention-installed', {});
+  }
+
   console.log('[FileView][DEBUG] terminalStore.tabs:', JSON.stringify(terminalStore.tabs.map(t => ({ id: t.id, agentId: t.agentId, title: t.title }))));
   console.log('[FileView][DEBUG] terminalStore.activeTabId:', terminalStore.activeTabId);
   console.log('[FileView][DEBUG] terminalStore.getActiveTabCwd():', terminalStore.getActiveTabCwd());
@@ -553,16 +700,32 @@ onMounted(async () => {
 
   // Connect WebSocket first
   console.log('[FileView][DEBUG] connecting WebSocket...', (performance.now() - _dbgT0).toFixed(0) + 'ms');
-  await connectWebSocket();
-  wsConnected = true;
-  console.log('[FileView][DEBUG] WebSocket connected', (performance.now() - _dbgT0).toFixed(0) + 'ms');
+  blackbox.log('lifecycle', 'fileview:ws-connecting', {});
+  try {
+    await connectWebSocket();
+    wsConnected = true;
+    blackbox.log('lifecycle', 'fileview:ws-connected', { elapsed: performance.now() - _dbgT0 });
+  } catch (err) {
+    blackbox.log('error', 'fileview:ws-connect-failed', { error: String(err) });
+  }
 
   // Register upload complete handler
   fileWebSocket.onUploadComplete(handleUploadComplete);
 
   // Load agents
   console.log('[FileView][DEBUG] loading agents...', (performance.now() - _dbgT0).toFixed(0) + 'ms');
-  await loadAgents();
+  blackbox.log('lifecycle', 'fileview:agents-loading', {});
+  try {
+    await loadAgents();
+    blackbox.log('lifecycle', 'fileview:agents-loaded', {
+      elapsed: performance.now() - _dbgT0,
+      total: agents.value.length,
+      online: onlineAgents.value.length,
+      selectedAgentId: selectedAgentId.value,
+    });
+  } catch (err) {
+    blackbox.log('error', 'fileview:agents-load-failed', { error: String(err) });
+  }
   console.log('[FileView][DEBUG] agents loaded, online:', onlineAgents.value.length, (performance.now() - _dbgT0).toFixed(0) + 'ms');
   console.log('[FileView][DEBUG] all agents:', JSON.stringify(agents.value.map(a => ({ agentId: a.agentId, name: a.name, online: a.online }))));
   console.log('[FileView][DEBUG] onlineAgents:', JSON.stringify(onlineAgents.value.map(a => a.agentId)));
@@ -624,6 +787,12 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  // [debug-blackbox] Cleanup swipe prevention listeners
+  const fileViewEl = document.querySelector('.file-view');
+  if (fileViewEl) {
+    fileViewEl.removeEventListener('touchstart', onFileViewTouchStart, { capture: true });
+    fileViewEl.removeEventListener('touchmove', onFileViewTouchMove, { capture: true });
+  }
   document.removeEventListener('click', handleClickOutside);
   if (agentLoadInterval) clearInterval(agentLoadInterval);
   if (cwdPollInterval) clearInterval(cwdPollInterval);
@@ -674,6 +843,18 @@ watch(
     }
   }
 );
+
+// [pdf-fix] Always sync selectedAgentId to fileWebSocket so file:download/file:validate
+// include the agentId. Without this, navigating Terminal→Files re-creates the WS with agentId=null.
+watch(
+  () => selectedAgentId.value,
+  (agentId) => {
+    if (agentId) {
+      fileWebSocket.setAgentId(agentId);
+    }
+  },
+  { immediate: true }
+);
 </script>
 
 <style scoped>
@@ -686,6 +867,8 @@ watch(
   color: var(--text-primary);
   position: relative;
   overflow: hidden;
+  touch-action: none; /* Block ALL browser touch gestures including swipe navigation */
+  overscroll-behavior: none; /* Prevent overscroll navigation */
 }
 
 .agent-bar {
@@ -887,10 +1070,23 @@ watch(
   padding: var(--space-3);
   background: var(--bg-root);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  border-right: none;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
   color: var(--text-primary);
   font-size: 14px;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.path-go-group {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.go-btn {
+  border-left: none;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  flex-shrink: 0;
 }
 
 .path-input::placeholder {
@@ -1053,13 +1249,13 @@ watch(
 
 .form-hint {
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: 0.95rem;
   margin: var(--space-2) 0 0;
 }
 
 .form-error {
   color: var(--error);
-  font-size: 0.85rem;
+  font-size: 1rem;
   margin: var(--space-2) 0 0;
 }
 
@@ -1123,7 +1319,7 @@ watch(
 .modal-header h3 {
   margin: 0;
   color: var(--text-primary);
-  font-size: 1.1rem;
+  font-size: 1.3rem;
   font-weight: 600;
 }
 
@@ -1145,7 +1341,7 @@ watch(
   display: block;
   margin-bottom: var(--space-2);
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: 1rem;
   font-weight: 500;
 }
 
@@ -1156,7 +1352,7 @@ watch(
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   color: var(--text-primary);
-  font-size: 1rem;
+  font-size: 1.15rem;
   box-sizing: border-box;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
@@ -1192,7 +1388,7 @@ watch(
   border: none;
   border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 1.05rem;
   font-weight: 500;
   transition: background var(--transition-fast), opacity var(--transition-fast);
 }

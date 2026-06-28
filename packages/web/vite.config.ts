@@ -9,6 +9,25 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'icons/*.svg'],
+      // Force service worker update to clear old cached responses
+      injectRegister: 'auto',
+      workbox: {
+        // Don't cache .mjs files (PDF.js worker needs fresh Content-Type)
+        globIgnores: ['**/*.mjs'],
+        runtimeCaching: [
+          {
+            urlPattern: /\.(js|mjs)$/,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'js-cache',
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 86400, // 1 day
+              },
+            },
+          },
+        ],
+      },
       manifest: {
         name: 'remoteCli - PowerShell Terminal',
         short_name: 'remoteCli',

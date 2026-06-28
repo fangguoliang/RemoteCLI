@@ -11,7 +11,7 @@
       </div>
 
       <!-- Content -->
-      <div class="viewer-content" @touchstart="handleTouchStart" @touchend="handleTouchEnd">
+      <div ref="contentRef" class="viewer-content" @touchstart="handleTouchStart" @touchend="handleTouchEnd">
         <div v-if="loading" class="loading-overlay">
           <div class="spinner"></div>
         </div>
@@ -46,13 +46,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, onBeforeUnmount } from 'vue';
+import { useRouter } from 'vue-router';
 import { MdEditor, MdPreview } from 'md-editor-v3';
 import 'md-editor-v3/lib/style.css';
 import { useFileStore } from '@/stores/file';
 import { fileWebSocket } from '@/services/fileWebSocket';
+import { blackbox } from '@/utils/eventLogger';
 
+const router = useRouter();
 const store = useFileStore();
+
+// Close markdown viewer when navigating away from terminal
+router.afterEach(() => {
+  if (store.viewerVisible) {
+    fileWebSocket.cancelViewing();
+    store.clearViewer();
+  }
+});
 
 const visible = computed(() => store.viewerVisible);
 const loading = computed(() => store.viewerLoading);
@@ -65,6 +76,32 @@ const isEditMode = ref(false);
 const showToast = ref(false);
 const toastMessage = ref('');
 const isErrorToast = ref(false);
+
+// [swipe-nav-fix] Push a history state when viewer opens to trap browser swipe-back gesture.
+let viewerHistoryPushed = false;
+
+function onPopStateCloseViewer() {
+  if (viewerHistoryPushed && store.viewerVisible) {
+    viewerHistoryPushed = false;
+    handleClose();
+    // Signal to FileView's popstate handler that we handled this swipe-back
+    (window as any).__swipeBackHandled = true;
+    setTimeout(() => { (window as any).__swipeBackHandled = false; }, 100);
+  }
+}
+
+window.addEventListener('popstate', onPopStateCloseViewer);
+
+watch(visible, (v) => {
+  if (v && !viewerHistoryPushed) {
+    history.pushState({ markdownViewer: true }, '');
+    viewerHistoryPushed = true;
+  }
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('popstate', onPopStateCloseViewer);
+});
 let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const fileName = computed(() => {
@@ -77,23 +114,94 @@ watch(storeContent, (newContent) => {
   content.value = newContent;
 }, { immediate: true });
 
-// Swipe gesture handling
+// Swipe gesture handling — strict thresholds to avoid conflicts with md-editor toolbar
 let touchStartX = 0;
+let touchStartY = 0;
+let touchStartTarget: HTMLElement | null = null;
+const contentRef = ref<HTMLElement | null>(null);
+
+// Non-passive touchmove to prevent browser horizontal swipe navigation
+function onTouchStartCapture(e: TouchEvent) {
+  touchStartTarget = e.target as HTMLElement;
+  blackbox.log('mdview-touch', 'mdviewer:touchstart', {
+    x: e.touches[0].clientX,
+    y: e.touches[0].clientY,
+    targetClass: touchStartTarget?.className?.slice(0, 50) || 'unknown',
+    isToolbar: !!touchStartTarget?.closest('.md-editor-toolbar, .md-b-toolbar, .md-editor-toolbar-wrapper'),
+    isScrollable: !!touchStartTarget?.closest('.md-editor, .md-editor-preview-wrap'),
+  });
+}
+
+function onTouchMove(e: TouchEvent) {
+  const dx = Math.abs(e.touches[0].clientX - touchStartX);
+  const dy = Math.abs(e.touches[0].clientY - touchStartY);
+  const isHorizontal = dx > dy;
+
+  // For toolbar: still prevent horizontal swipe that would trigger browser navigation
+  if (touchStartTarget?.closest('.md-editor-toolbar, .md-b-toolbar, .md-editor-toolbar-wrapper')) {
+    if (isHorizontal && dx > 10) {
+      e.preventDefault();
+      blackbox.log('mdview-touch', 'mdviewer:touchmove-blocked-toolbar', { dx, dy, prevented: true });
+    }
+    return;
+  }
+  // For scrollable content: still prevent horizontal swipe
+  if (touchStartTarget?.closest('.md-editor, .md-editor-preview-wrap')) {
+    if (isHorizontal && dx > 10) {
+      e.preventDefault();
+      blackbox.log('mdview-touch', 'mdviewer:touchmove-blocked-content', { dx, dy, prevented: true });
+    }
+    return;
+  }
+  if (isHorizontal && dx > 10) {
+    e.preventDefault();
+    blackbox.log('mdview-touch', 'mdviewer:touchmove-blocked-other', { dx, dy, prevented: true });
+  }
+}
+
+function onTouchEndCapture(e: TouchEvent) {
+  blackbox.log('mdview-touch', 'mdviewer:touchend', {
+    targetClass: touchStartTarget?.className?.slice(0, 50) || 'unknown',
+    changedTouches: e.changedTouches.length,
+  });
+}
+
+onMounted(() => {
+  contentRef.value?.addEventListener('touchstart', onTouchStartCapture, { passive: true, capture: true });
+  contentRef.value?.addEventListener('touchmove', onTouchMove, { passive: false });
+  contentRef.value?.addEventListener('touchend', onTouchEndCapture, { passive: true, capture: true });
+});
+
+onBeforeUnmount(() => {
+  contentRef.value?.removeEventListener('touchstart', onTouchStartCapture, { capture: true });
+  contentRef.value?.removeEventListener('touchmove', onTouchMove);
+  contentRef.value?.removeEventListener('touchend', onTouchEndCapture, { capture: true });
+});
 
 function handleTouchStart(e: TouchEvent) {
   touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
 }
 
 function handleTouchEnd(e: TouchEvent) {
+  // Skip swipe if touch started on toolbar or scrollable content
+  const target = touchStartTarget || (e.target as HTMLElement);
+  if (target.closest('.md-editor-toolbar, .md-b-toolbar, .md-editor-toolbar-wrapper')) return;
+  if (target.closest('.md-editor, .md-editor-preview-wrap')) return;
   const touchEndX = e.changedTouches[0].clientX;
+  const touchEndY = e.changedTouches[0].clientY;
   const deltaX = touchEndX - touchStartX;
+  const deltaY = Math.abs(touchEndY - touchStartY);
 
-  if (deltaX < -50) {
-    // Swipe left → edit mode
-    isEditMode.value = true;
-  } else if (deltaX > 50) {
-    // Swipe right → preview mode
-    isEditMode.value = false;
+  // Must be primarily horizontal: |dx| > 2 * |dy| and > 100px
+  if (Math.abs(deltaX) > 100 && Math.abs(deltaX) > deltaY * 2) {
+    if (deltaX < 0) {
+      // Swipe left → edit mode
+      isEditMode.value = true;
+    } else {
+      // Swipe right → preview mode
+      isEditMode.value = false;
+    }
   }
 }
 
@@ -103,6 +211,7 @@ function handleClose() {
     clearTimeout(toastTimeout);
     toastTimeout = null;
   }
+  fileWebSocket.cancelViewing();
   store.clearViewer();
   isEditMode.value = false;
 }
@@ -140,10 +249,18 @@ function handleSave() {
         showErrorToast('Save failed, retry');
       }
       saving.value = false;
+      clearTimeout(saveTimeout);
       fileWebSocket.off('file:uploaded', handleUploaded);
     }
   };
   fileWebSocket.on('file:uploaded', handleUploaded);
+
+  // Timeout: if no response in 30s, clean up
+  const saveTimeout = setTimeout(() => {
+    fileWebSocket.off('file:uploaded', handleUploaded);
+    saving.value = false;
+    showErrorToast('Save timeout, retry');
+  }, 30000);
 
   for (let i = 0; i < totalChunks; i++) {
     const chunk = base64.substring(i * chunkSize, Math.min((i + 1) * chunkSize, base64.length));
@@ -201,6 +318,16 @@ onUnmounted(() => {
   background: var(--bg-root);
   display: flex;
   flex-direction: column;
+  /* touch-action removed - was 'none' which blocked vertical scrolling via CSS inheritance.
+     Horizontal swipe prevention is handled by JS touchmove preventDefault handler. */
+}
+
+/* Do NOT set touch-action on content elements - let MdEditor's internal touch-action: none
+   block swipe-back at root level, while the browser detects overflow:auto child for vertical scroll. */
+.markdown-viewer-overlay .md-editor,
+.markdown-viewer-overlay .md-editor-preview-wrap,
+.markdown-viewer-overlay .md-editor .md-editor-preview {
+  overscroll-behavior: none;
 }
 
 .viewer-header {
@@ -226,6 +353,7 @@ onUnmounted(() => {
 .back-btn {
   background: transparent;
   color: var(--text-primary);
+  touch-action: manipulation; /* Ensure click fires even when parent has touch-action: none */
 }
 
 .back-btn:hover {
@@ -327,6 +455,21 @@ onUnmounted(() => {
 .markdown-viewer-overlay .md-editor-toolbar-wrapper {
   background: #252526 !important;
   border-bottom: 1px solid #3C3C3C !important;
+}
+
+/* Make toolbar horizontally scrollable on mobile */
+.markdown-viewer-overlay .md-editor-toolbar,
+.markdown-viewer-overlay .md-b-toolbar {
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  flex-wrap: nowrap !important;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  touch-action: pan-x; /* allow horizontal scroll, block browser swipe navigation */
+}
+.markdown-viewer-overlay .md-editor-toolbar::-webkit-scrollbar,
+.markdown-viewer-overlay .md-b-toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .markdown-viewer-overlay .md-editor-content {

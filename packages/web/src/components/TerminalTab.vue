@@ -408,6 +408,17 @@ function forceScrollToBottom() {
   }
 }
 
+// [debug-loop] fix: Get line text for cross-line lookback.
+// translateToString(true) trimRight strips fullwidth trail cells (width=0) at line end,
+// which can also discard the lead cell of the last Chinese character when it sits at
+// the visual wrap boundary. Use translateToString(false) + manual ASCII-only trim.
+function getLineTextForLookback(line: any): string {
+  const raw = line.translateToString(false);
+  const trimmed = raw.replace(/[ \t]+$/, '');
+  console.log('[getLineTextForLookback] raw.length:', raw.length, 'trimmed.length:', trimmed.length, 'raw:', JSON.stringify(raw.substring(0, 80)), 'trimmed:', JSON.stringify(trimmed.substring(0, 80)));
+  return trimmed;
+}
+
 // Build a mapping from string index to cell position for a terminal line.
 // translateToString(true) skips trail cells of fullwidth characters (e.g., Chinese),
 // so string index != cell position when fullwidth chars are present.
@@ -518,6 +529,10 @@ function initTerminal() {
   // Special handling for colon: if the matched part starts with [A-Za-z]: (Windows drive),
   // then the preceding colon is a separator and we should keep the drive letter.
   function isPathSeparator(charBefore: string, matchedPart: string): boolean {
+    // Check for backslash and forward slash (common path separators)
+    if (charBefore === '\\' || charBefore === '/') {
+      return true;
+    }
     if (charBefore === ' ' || charBefore === '"' || charBefore === "'" || charBefore === '`') {
       return true;
     }
@@ -622,10 +637,11 @@ function initTerminal() {
                 break;
               }
 
-              const prevText = prevLine.translateToString(true); // Trim right whitespace to handle echo commands
+              const prevText = getLineTextForLookback(prevLine); // [debug-loop] fix: preserve fullwidth at wrap boundary
 
-              // Find path chars at end of line
-              const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+              // Find path chars at end of line (includes Chinese 一-鿿)
+              // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+              const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/一-鿿]+)["']?$/);
 
               if (pathEndMatch) {
                 const endPart = pathEndMatch[1];
@@ -721,10 +737,11 @@ function initTerminal() {
             const prevLineNum = bufferLineNumber - 2;  // prev line in 0-based: bufferLineNumber is 1-based, prev = -2
             const prevLine = buffer.getLine(prevLineNum);
             if (prevLine) {
-              const prevText = prevLine.translateToString(true);
+              const prevText = getLineTextForLookback(prevLine);
               // Check if previous line ends with path chars that could form .md with this suffix
               // Include colon for Windows drive letters (D:), trim leading whitespace
-              const prevEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/\u4e00-\u9fff ]+)$/);
+              // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+              const prevEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/\u4e00-\u9fff ]+)["']?$/);
               if (prevEndMatch) {
                 const prevPart = prevEndMatch[1].trimStart();
                 const combined = (prevPart + suffixPart).trim();
@@ -741,8 +758,8 @@ function initTerminal() {
                     while (lookbackLine >= 0) {
                       const lbLine = buffer.getLine(lookbackLine);
                       if (!lbLine) break;
-                      const lbText = lbLine.translateToString(true);
-                      const lbMatch = lbText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+                      const lbText = getLineTextForLookback(lbLine);
+                      const lbMatch = lbText.match(/([-a-zA-Z0-9_:.\\\/一-]+)["']?$/);
                       if (lbMatch) {
                         const lbPart = lbMatch[1];
                         const lbIndex = lbMatch.index ?? 0;
@@ -792,7 +809,8 @@ function initTerminal() {
         }
 
         // Also check for path continuations (line ending with path chars that continue to .md on next line)
-        const pathEndRegex = /[-a-zA-Z0-9_:.\\\/]+$/;
+        // Includes Chinese characters (一-鿿) for wrapped paths with Chinese filenames
+        const pathEndRegex = /[-a-zA-Z0-9_:.\\\/一-鿿]+$/;
         const pathEndMatch = lineText.match(pathEndRegex);
 
         if (pathEndMatch && foundLinks.length === 0) {
@@ -810,9 +828,9 @@ function initTerminal() {
 
             // Check if next line starts with path chars and has .md (or continuation like 'd', 'md')
             // Handles cases where '.md' is split: 'file.m' on one line, 'd' on next
-            // Allow leading whitespace
-            const mdMatch = nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/]*\.md|md|d)(?:\s|$|[,.:;!?)}\]])/)
-              || nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/]*\.md|md|d)$/);
+            // Allow leading whitespace. Includes Chinese characters (一-鿿) for wrapped paths.
+            const mdMatch = nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/一-鿿]*\.md|md|d)(?:\s|$|[,.:;!?)}\]])/)
+              || nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/一-鿿]*\.md|md|d)$/);
             if (mdMatch && (mdMatch[0].endsWith('.md') || mdMatch[0].trim() === 'd' || mdMatch[0].trim() === 'md' || /\.m?$/.test(matchedEnd))) {
               const pathSuffix = mdMatch[0].trim();
 
@@ -830,9 +848,11 @@ function initTerminal() {
                   const prevLine = buffer.getLine(lookbackLine);
                   if (!prevLine) break;
 
-                  const prevText = prevLine.translateToString(false);
+                  const prevText = getLineTextForLookback(prevLine);
 
-                  const prevMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+                  // Look back for path chars (includes Chinese 一-鿿)
+                  // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+                  const prevMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/一-]+)["']?$/);
 
                   if (prevMatch) {
                     const endPart = prevMatch[1];
@@ -890,8 +910,8 @@ function initTerminal() {
               break;
             }
 
-            // Check if next line has path chars but no .md yet - continue looking
-            const pathContMatch = nextText.match(/^\s*[-a-zA-Z0-9_:.\\\/]+/);
+            // Check if next line has path chars but no .md yet - continue looking (includes Chinese)
+            const pathContMatch = nextText.match(/^\s*[-a-zA-Z0-9_:.\\\/一-鿿]+/);
             if (pathContMatch) {
               lookAheadLine++;
             } else {
@@ -959,17 +979,19 @@ function initTerminal() {
           });
         }
 
-        // HTML file detection
-        const htmlRegex = /[-a-zA-Z0-9_:.\\\/]+\.html?/g;
+        // HTML file detection (includes Chinese characters 一-鿿)
+        const htmlRegex = /[-a-zA-Z0-9_:.\\\/一-鿿]+\.html?/g;
         let htmlMatch;
 
         while ((htmlMatch = htmlRegex.exec(lineText)) !== null) {
           const matchedPath = htmlMatch[0];
           const matchStart = htmlMatch.index;
           const matchEnd = matchStart + matchedPath.length;
+          console.log('[HTML LinkProvider] Matched:', JSON.stringify(matchedPath), 'on line', bufferLineNumber, 'lineText:', JSON.stringify(lineText.substring(0, 50)));
 
           // Try to build complete path by looking at previous lines (same logic as .md files)
           let completePath = matchedPath;
+          let foundCompletePath = false; // [debug-loop] fix: avoid duplicate path when endPart is complete
           const isAbsolutePath = /^[A-Za-z]:/.test(matchedPath) || /^[.\/]/.test(matchedPath);
 
           if (!isAbsolutePath) {
@@ -980,32 +1002,58 @@ function initTerminal() {
               const prevLine = buffer.getLine(lookbackLine);
               if (!prevLine) break;
 
-              const prevText = prevLine.translateToString(true);
-              const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+              const prevText = getLineTextForLookback(prevLine);
+              console.log('[HTML cross-line] lookbackLine:', lookbackLine, 'prevText:', JSON.stringify(prevText), 'prevText.length:', prevText.length, 'isWrapped:', prevLine.isWrapped);
+              // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+              const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/一-鿿]+)["']?$/);
+              console.log('[HTML cross-line] pathEndMatch:', pathEndMatch ? JSON.stringify(pathEndMatch[1]) : null, 'index:', pathEndMatch?.index);
 
               if (pathEndMatch) {
                 const endPart = pathEndMatch[1];
                 const endIndex = pathEndMatch.index ?? 0;
+                console.log('[HTML cross-line] endPart:', JSON.stringify(endPart), 'endIndex:', endIndex, 'pathPrefix (before):', JSON.stringify(pathPrefix));
 
                 if (endIndex > 0) {
                   const charBefore = prevText[endIndex - 1];
+                  console.log('[HTML cross-line] charBefore:', JSON.stringify(charBefore), 'charBefore.codePointAt:', charBefore.codePointAt(0));
                   if (isPathSeparator(charBefore, endPart)) {
-                    pathPrefix = endPart + pathPrefix;
-                    completePath = pathPrefix + matchedPath;
+                    console.log('[HTML cross-line] isPathSeparator=true, breaking');
+                    // If separator is a quote, clear previous pathPrefix (it's a new complete path)
+                    if (charBefore === '"' || charBefore === "'") {
+                      pathPrefix = endPart;
+                    } else {
+                      pathPrefix = endPart + pathPrefix;
+                    }
+                    // If endPart is already a complete path (ends with .html/.md/etc), don't append matchedPath
+                    if (/\.(html?|md|txt|log|json|js|ts|css|scss|less|py|java|cpp|c|h|go|rs|php|rb|sh|bat|ps1|yaml|yml|xml|svg|png|jpg|jpeg|gif|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|tar|gz|rar|7z)$/i.test(endPart)) {
+                      completePath = endPart;
+                      foundCompletePath = true; // [debug-loop] fix: mark as found to avoid duplicate
+                      console.log('[HTML cross-line] endPart is complete path, using:', completePath);
+                    } else {
+                      completePath = pathPrefix + matchedPath;
+                    }
                     break;
+                  } else {
+                    console.log('[HTML cross-line] isPathSeparator=false, continuing lookback');
                   }
+                } else {
+                  console.log('[HTML cross-line] endIndex=0, no charBefore to check');
                 }
 
                 pathPrefix = endPart + pathPrefix;
+                console.log('[HTML cross-line] pathPrefix (after):', JSON.stringify(pathPrefix));
                 lookbackLine--;
               } else {
+                console.log('[HTML cross-line] pathEndMatch=null, breaking');
                 break;
               }
             }
 
-            if (pathPrefix && completePath === matchedPath) {
+            // [debug-loop] fix: only append if not already found complete path in loop
+            if (!foundCompletePath && pathPrefix && completePath === matchedPath) {
               completePath = pathPrefix + matchedPath;
             }
+            console.log('[HTML cross-line] FINAL: matchedPath:', JSON.stringify(matchedPath), 'pathPrefix:', JSON.stringify(pathPrefix), 'completePath:', JSON.stringify(completePath));
           }
 
           const htmlCellStart = strToCell[matchStart] ?? matchStart;
@@ -1088,8 +1136,8 @@ function initTerminal() {
     // Build string-index → cell-position mapping (handles fullwidth chars like Chinese)
     const strToCell = buildStringToCellMap(line, lineText);
 
-    // Check if click is on a .md file (Windows absolute, relative, Unix-style)
-    const mdRegex = /[-a-zA-Z0-9_:.\\\/]+\.md/g;
+    // Check if click is on a .md file (Windows absolute, relative, Unix-style, includes Chinese)
+    const mdRegex = /[-a-zA-Z0-9_:.\\\/一-鿿]+\.md/g;
     let match;
     while ((match = mdRegex.exec(lineText)) !== null) {
       const matchedPath = match[0];
@@ -1117,10 +1165,11 @@ function initTerminal() {
             const prevLine = buffer.getLine(lookbackLine);
             if (!prevLine) break;
 
-            const prevText = prevLine.translateToString(false);
+            const prevText = getLineTextForLookback(prevLine);
 
-            // Find path chars at end of line
-            const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+            // Find path chars at end of line (includes Chinese)
+            // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+            const pathEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/一-]+)["']?$/);
 
             if (pathEndMatch) {
               const endPart = pathEndMatch[1];
@@ -1220,7 +1269,7 @@ function initTerminal() {
     console.log('[DirectClick] fileUrlRegex loop finished, no click inside match');
 
     // Check if click is on an HTML file path (without file:// prefix, and not already part of file://)
-    const htmlFileRegex = /(?<!file:\/\/)[-a-zA-Z0-9_:.\\\/]+\.html?/g;
+    const htmlFileRegex = /(?<!file:\/\/)[-a-zA-Z0-9_:.\\\/一-鿿]+\.html?/g;
     let htmlFileMatch;
     while ((htmlFileMatch = htmlFileRegex.exec(lineText)) !== null) {
       const matchedPath = htmlFileMatch[0];
@@ -1233,7 +1282,7 @@ function initTerminal() {
         // Check if this might be a continuation of a file:// URL from the previous line
         const prevLine = buffer.getLine(bufferLine - 1);
         if (prevLine) {
-          const prevText = prevLine.translateToString(true);
+          const prevText = getLineTextForLookback(prevLine);
           const prevFileUrlMatch = prevText.match(/(file:\/\/[A-Za-z]:[^\s"'<>]*)$/);
           if (prevFileUrlMatch) {
             // Previous line has a file:// URL that was cut off
@@ -1256,8 +1305,8 @@ function initTerminal() {
     console.log('[DirectClick] htmlFileRegex loop finished, no click inside match');
 
     // No .md match found on current line - check if clicked on a path that continues to next line
-    // Match path-like content (ending with \ or / or just path chars at end of line)
-    const pathEndRegex = /[-a-zA-Z0-9_:.\\\/]+$/;
+    // Match path-like content (ending with \ or / or just path chars at end of line, includes Chinese)
+    const pathEndRegex = /[-a-zA-Z0-9_:.\\\/一-鿿]+$/;
     const pathEndMatch = lineText.match(pathEndRegex);
 
     // Also check if this line starts with .md or md (reverse cross-line continuation)
@@ -1273,8 +1322,9 @@ function initTerminal() {
         const prevLineNum = bufferLine - 1;
         const prevLine = buffer.getLine(prevLineNum);
         if (prevLine) {
-          const prevText = prevLine.translateToString(true);
-          const prevEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/\u4e00-\u9fff ]+)$/);
+          const prevText = getLineTextForLookback(prevLine);
+          // Allow optional trailing quote (PowerShell wraps paths with special chars in quotes)
+          const prevEndMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/\u4e00-\u9fff ]+)["']?$/);
           if (prevEndMatch) {
             const prevPart = prevEndMatch[1].trimStart();
             const combined = (prevPart + suffixPart).trim();
@@ -1290,8 +1340,8 @@ function initTerminal() {
                 while (lookbackLine >= 0) {
                   const lbLine = buffer.getLine(lookbackLine);
                   if (!lbLine) break;
-                  const lbText = lbLine.translateToString(true);
-                  const lbMatch = lbText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+                  const lbText = getLineTextForLookback(lbLine);
+                  const lbMatch = lbText.match(/([-a-zA-Z0-9_:.\\\/一-]+)["']?$/);
                   if (lbMatch) {
                     const lbPart = lbMatch[1];
                     const lbIndex = lbMatch.index ?? 0;
@@ -1342,10 +1392,10 @@ function initTerminal() {
 
           const nextText = nextLine.translateToString(true);
 
-          // Check if next line starts with path chars and has .md
+          // Check if next line starts with path chars and has .md (includes Chinese)
           // Also match continuation patterns: just "md", "d", ".md" with optional leading whitespace
-          const mdMatch = nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/]*\.md|md|d)(?:\s|$|[,.:;!?)}\]])/)
-            || nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/]*\.md|md|d)$/);
+          const mdMatch = nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/一-鿿]*\.md|md|d)(?:\s|$|[,.:;!?)}\]])/)
+            || nextText.match(/^\s*(?:[-a-zA-Z0-9_:.\\\/一-鿿]*\.md|md|d)$/);
           if (mdMatch) {
             pathSuffix = mdMatch[0].trim();
 
@@ -1362,9 +1412,9 @@ function initTerminal() {
                 const prevLine = buffer.getLine(lookbackLine);
                 if (!prevLine) break;
 
-                const prevText = prevLine.translateToString(false);
+                const prevText = getLineTextForLookback(prevLine);
 
-                const prevMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/]+)$/);
+                const prevMatch = prevText.match(/([-a-zA-Z0-9_:.\\\/一-]+)["']?$/);
 
                 if (prevMatch) {
                   const endPart = prevMatch[1];
@@ -1400,8 +1450,8 @@ function initTerminal() {
             return;
           }
 
-          // Check if next line has path chars but no .md yet
-          const pathContMatch = nextText.match(/^[-a-zA-Z0-9_:.\\\/]+/);
+          // Check if next line has path chars but no .md yet (includes Chinese)
+          const pathContMatch = nextText.match(/^[-a-zA-Z0-9_:.\\\/一-鿿]+/);
           if (pathContMatch) {
             pathSuffix = pathContMatch[0];
             lookAheadLine++;
@@ -1511,6 +1561,23 @@ function initTerminal() {
       forceScrollToBottom();
     }
   });
+
+  // Pre-connect fileWebSocket for file browsing (md/html preview)
+  // This ensures the connection is ready when user clicks on file links
+  if (!fileWebSocket.isConnected()) {
+    const apiUrl = settingsStore.settings.apiUrl || '';
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = apiUrl
+      ? apiUrl.replace(/^http/, 'ws') + '/ws/browser'
+      : `${wsProtocol}//${window.location.host}/ws/browser`;
+
+    console.log('[TerminalTab] Pre-connecting fileWebSocket for file browsing');
+    fileWebSocket.connect(wsUrl, props.tab.agentId).then(() => {
+      console.log('[TerminalTab] fileWebSocket pre-connected successfully');
+    }).catch(err => {
+      console.error('[TerminalTab] Failed to pre-connect fileWebSocket:', err);
+    });
+  }
 }
 
 // Send input to the terminal

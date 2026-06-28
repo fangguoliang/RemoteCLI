@@ -16,6 +16,8 @@ export class Tunnel {
   private uploadSessions = new Map<string, string>(); // sessionId -> uploadId
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private pongTimeout: NodeJS.Timeout | null = null;
+  private lastPongTime: number = Date.now();
 
   initVoiceLLM(): void {
     console.log('[Tunnel] Initializing VoiceLLM...');
@@ -41,12 +43,22 @@ export class Tunnel {
 
     this.ws.on('open', () => {
       console.log('Connected to server');
+      this.lastPongTime = Date.now();
       this.register();
       this.startHeartbeat();
     });
 
     this.ws.on('message', (data) => {
-      this.handleMessage(data.toString());
+      const msgStr = data.toString();
+      try {
+        const msg = JSON.parse(msgStr);
+        // [agent-fix] Track pong responses to detect dead connections
+        if (msg.type === 'pong') {
+          this.lastPongTime = Date.now();
+          return;
+        }
+      } catch { /* not JSON, ignore */ }
+      this.handleMessage(msgStr);
     });
 
     this.ws.on('close', () => {
@@ -74,7 +86,16 @@ export class Tunnel {
 
   private startHeartbeat() {
     this.heartbeatTimer = setInterval(() => {
-      this.send({ type: 'ping', timestamp: Date.now() });
+      // [agent-fix] Check if we received a pong recently
+      // If no pong for 2 heartbeat intervals, connection is likely dead
+      const now = Date.now();
+      const timeSinceLastPong = now - this.lastPongTime;
+      if (timeSinceLastPong > config.heartbeatInterval * 2) {
+        console.log(`[Tunnel] No pong received for ${timeSinceLastPong}ms, reconnecting...`);
+        this.ws?.terminate(); // Force close
+        return;
+      }
+      this.send({ type: 'ping', timestamp: now });
     }, config.heartbeatInterval);
   }
 
@@ -510,7 +531,11 @@ export class Tunnel {
 
   private send(message: unknown) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
+      try {
+        this.ws.send(JSON.stringify(message));
+      } catch (err) {
+        console.error('[Tunnel] send error:', err);
+      }
     }
   }
 

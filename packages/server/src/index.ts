@@ -5,6 +5,7 @@ import { config } from './config/index.js';
 import { initDatabase } from './db/index.js';
 import { authRoutes } from './routes/auth.js';
 import { adminRoutes } from './routes/admin.js';
+import { blackboxRoutes } from './routes/blackbox.js';
 import { setupWebSocket } from './ws/index.js';
 import { startProxyServer } from './proxy/index.js';
 import { VoiceAgentManager } from './voice/voiceAgent.js';
@@ -71,15 +72,17 @@ await fastify.register(jwt, { secret: config.jwtSecret });
 // Register routes
 await fastify.register(authRoutes);
 await fastify.register(adminRoutes);
+await fastify.register(blackboxRoutes);
 
 // Health check
 fastify.get('/api/health', async () => ({ status: 'ok', timestamp: Date.now() }));
 
 // Serve static files from web directory
-const webPath = join(__dirname, '../../web');
+const webPath = join(__dirname, '../web');
 const mimeTypes: Record<string, string> = {
   '.html': 'text/html',
   '.js': 'application/javascript',
+  '.mjs': 'application/javascript',
   '.css': 'text/css',
   '.json': 'application/json',
   '.png': 'image/png',

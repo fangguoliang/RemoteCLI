@@ -648,14 +648,38 @@ function initTerminal() {
                 const endIndex = pathEndMatch.index ?? 0;
                 console.log('[MD LinkProvider] Found pathEndMatch:', endPart, 'at index', endIndex);
 
+                // [debug-loop] fix: If endPart contains no word characters (letters/digits/Chinese),
+                // it's a table decoration line (e.g., "----", "------") from PowerShell's ls output,
+                // not a real path component. Stop lookback immediately.
+                if (!/[\w一-鿿]/.test(endPart)) {
+                  console.log('[MD LinkProvider] endPart has no word chars (table decoration), stopping lookback');
+                  break;
+                }
+
                 // [debug-loop] fix: If the previous line's end already has a file extension
                 // (e.g., "pnpm-workspace.yaml"), it's a complete separate file in a directory listing,
                 // not a directory path prefix for the current file. Skip concatenation.
-                // Exception: if it ends with .md, it could be a soft-wrapped .md path that we need
-                // to continue building (handled by the cross-line detection below, not here).
-                const prevHasFileExtension = /\.[a-zA-Z0-9]{1,10}$/.test(endPart) && !endPart.endsWith('.md');
+                // Exception: if it ends with .md AND contains path separators (\ or /), it could be a
+                // soft-wrapped .md path that we need to continue building. A bare .md filename (no
+                // separators, e.g., "conversation-history.md" from `ls *md`) is always a complete entry.
+                const prevHasFileExtension = /\.[a-zA-Z0-9]{1,10}$/.test(endPart)
+                  && !(endPart.endsWith('.md') && /[\\\/]/.test(endPart));
                 if (prevHasFileExtension) {
                   console.log('[MD LinkProvider] Previous line end has file extension, skipping lookback (separate file listing)');
+                  break;
+                }
+
+                // [debug-loop] fix: If endPart has no path indicators (no \ or /, no drive letter,
+                // not . or ..), it's a plain word from table text or other output, not a path
+                // component. Stop lookback to avoid concatenating it as a fake directory name.
+                // Exceptions for soft-wrapped paths: endPart with separators (C:\folder) or drive
+                // letter (D:) are real path components; . and .. are valid relative path parts.
+                // Also skip break if endPart contains a dot (incomplete extension like "file.na").
+                const hasPathIndicators = /[\\\/]/.test(endPart)
+                  || /^[A-Za-z]:/.test(endPart)
+                  || endPart === '.' || endPart === '..';
+                if (!hasPathIndicators && !/\./.test(endPart)) {
+                  console.log('[MD LinkProvider] endPart has no path indicators, stopping lookback:', endPart);
                   break;
                 }
 
